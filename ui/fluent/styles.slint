@@ -1,0 +1,145 @@
+// Microsoft Fluent Design System - Styles, Colors, and Constants
+//
+// This file defines the core design system tokens for the AutoQAC application,
+// following Microsoft's Fluent Design principles.
+//
+// Reference: https://fluent2.microsoft.design/
+
+// ============================================================================
+// Color Palette - Dark Theme (Default)
+// ============================================================================
+
+/// Global color palette following Microsoft Fluent Design for dark theme
+export global FluentPalette {
+    // Background colors
+    in-out property <color> background: #202020;           // Main app background
+    in-out property <color> surface: #2B2B2B;              // Elevated surfaces
+    in-out property <color> surface-secondary: #323232;    // Secondary surfaces
+    in-out property <color> card-background: #2B2B2B;      // Card backgrounds
+    in-out property <color> card-stroke: #3F3F3F;          // Card borders
+
+    // Accent colors - Fluent Blue for dark theme
+    in-out property <color> accent: #60CDFF;               // Primary accent
+    in-out property <color> accent-hover: #3AA0F3;         // Accent hover state
+    in-out property <color> accent-pressed: #1A86D9;       // Accent pressed state
+    in-out property <color> accent-disabled: #3F3F3F;      // Disabled state
+
+    // Text colors
+    in-out property <color> text-primary: #FFFFFF;         // Primary text
+    in-out property <color> text-secondary: #CCCCCC;       // Secondary text
+    in-out property <color> text-tertiary: #999999;        // Tertiary/placeholder text
+    in-out property <color> text-on-accent: #000000;       // Text on accent backgrounds
+    in-out property <color> text-disabled: #6D6D6D;        // Disabled text
+
+    // Semantic colors
+    in-out property <color> success: #6CCB5F;              // Success states
+    in-out property <color> warning: #FCE100;              // Warning states
+    in-out property <color> error: #FF99A4;                // Error states
+    in-out property <color> info: #60CDFF;                 // Info states (same as accent)
+
+    // Effects - Border radii
+    in-out property <length> corner-radius: 4px;           // Standard corner radius
+    in-out property <length> card-corner-radius: 8px;      // Card corner radius
+    in-out property <length> input-corner-radius: 4px;     // Input field corners
+    in-out property <length> dialog-corner-radius: 8px;    // Dialog corners
+
+    // Effects - Elevation and shadows
+    in-out property <length> elevation-shadow: 4px;        // Standard shadow blur
+    in-out property <length> elevation-high: 8px;          // High elevation shadow
+
+    // Spacing scale (8px base unit)
+    in-out property <length> spacing-xs: 4px;
+    in-out property <length> spacing-sm: 8px;
+    in-out property <length> spacing-md: 12px;
+    in-out property <length> spacing-lg: 16px;
+    in-out property <length> spacing-xl: 24px;
+    in-out property <length> spacing-2xl: 32px;
+
+    // Component dimensions
+    in-out property <length> button-min-width: 120px;
+    in-out property <length> button-min-height: 32px;
+    in-out property <length> input-min-height: 32px;
+    in-out property <length> checkbox-size: 20px;
+}
+
+// ============================================================================
+// Animation Timings - Fluent Motion
+// ============================================================================
+
+/// Animation duration constants following Fluent Design motion principles
+///
+/// Fluent Design uses different timing for different types of transitions:
+/// - Fast: Immediate feedback (hover, focus)
+/// - Normal: Standard transitions (state changes, navigation)
+/// - Slow: Complex animations (page transitions, reveals)
+export global FluentAnimation {
+    // Duration values
+    in-out property <duration> fast: 150ms;                // Quick feedback
+    in-out property <duration> normal: 250ms;              // Standard transitions
+    in-out property <duration> slow: 400ms;                // Complex animations
+
+    // Easing curves (using Slint's built-in easing)
+    // Fluent uses ease-in-out for most transitions
+    in-out property <easing> standard-easing: ease-in-out;
+    in-out property <easing> enter-easing: ease-out;       // Elements entering
+    in-out property <easing> exit-easing: ease-in;         // Elements exiting
+}
+
+// ============================================================================
+// Typography Scale
+// ============================================================================
+
+/// Typography constants following Fluent Design type ramp
+export global FluentTypography {
+    // Font sizes
+    in-out property <length> title-large: 28px;            // Page titles
+    in-out property <length> title-medium: 20px;           // Section titles
+    in-out property <length> subtitle: 16px;               // Subtitles, card headers
+    in-out property <length> body: 14px;                   // Body text, buttons
+    in-out property <length> caption: 12px;                // Captions, labels
+
+    // Font weights
+    in-out property <int> weight-regular: 400;
+    in-out property <int> weight-semibold: 600;
+    in-out property <int> weight-bold: 700;
+
+    // Line heights (dimensionless floats)
+    in-out property <float> line-height-tight: 1.2;
+    in-out property <float> line-height-normal: 1.5;
+    in-out property <float> line-height-relaxed: 1.75;
+}
+
+// ============================================================================
+// Layout Constants
+// ============================================================================
+
+/// Layout and grid constants
+export global FluentLayout {
+    // Standard padding for containers
+    in-out property <length> container-padding: 24px;
+    in-out property <length> card-padding: 16px;
+
+    // Standard spacing between elements
+    in-out property <length> element-spacing: 12px;
+    in-out property <length> section-spacing: 24px;
+
+    // Border widths
+    in-out property <length> border-thin: 1px;
+    in-out property <length> border-thick: 2px;
+}
+
+// ============================================================================
+// Z-Index Layers
+// ============================================================================
+
+/// Z-index layering for stacking context
+///
+/// This ensures proper visual hierarchy with dialogs appearing above
+/// cards, which appear above the base surface.
+export global FluentLayers {
+    in-out property <int> base: 0;                         // Base layer
+    in-out property <int> elevated: 1;                     // Cards, elevated surfaces
+    in-out property <int> overlay: 100;                    // Overlays, dropdowns
+    in-out property <int> modal: 1000;                     // Modal dialogs
+    in-out property <int> toast: 2000;                     // Toast notifications
+}

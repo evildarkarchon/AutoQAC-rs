@@ -214,7 +214,6 @@ impl StateManager {
             || old.cpu_threshold != new.cpu_threshold
             || old.mo2_mode != new.mo2_mode
             || old.partial_forms_enabled != new.partial_forms_enabled
-            || old.max_concurrent_subprocesses != new.max_concurrent_subprocesses
         {
             changes.push(StateChange::SettingsChanged);
         }
@@ -499,14 +498,14 @@ mod tests {
 
         let changes = manager.update_settings(|state| {
             state.cleaning_timeout = Duration::from_secs(600);
-            state.max_concurrent_subprocesses = 5;
+            state.cpu_threshold = 10;
         });
 
         assert!(matches!(changes[0], StateChange::SettingsChanged));
 
         let state = manager.snapshot();
         assert_eq!(state.cleaning_timeout, Duration::from_secs(600));
-        assert_eq!(state.max_concurrent_subprocesses, 5);
+        assert_eq!(state.cpu_threshold, 10);
     }
 
     #[test]

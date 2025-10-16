@@ -1,0 +1,338 @@
+// Fluent Design Dialog Components
+//
+// Dialog components following Microsoft Fluent Design principles:
+// - Modal dialogs with backdrop
+// - Confirmation dialogs
+// - Message dialogs
+// - Progress dialogs
+//
+// Usage:
+//   FluentDialog {
+//       dialog-title: "Confirm";
+//       message: "Are you sure?";
+//       confirmed => { /* handle confirm */ }
+//   }
+
+import { FluentPalette, FluentAnimation, FluentTypography, FluentLayout } from "styles.slint";
+import { FluentButton } from "button.slint";
+import { FluentCard } from "card.slint";
+
+/// Standard Fluent Design dialog
+///
+/// A modal dialog with title, message, and OK/Cancel buttons.
+///
+/// Properties:
+/// - dialog-title: Title displayed at the top of the dialog
+/// - message: Main message text
+/// - show-cancel: If true, shows Cancel button (default: true)
+/// - confirm-text: Text for confirm button (default: "OK")
+/// - cancel-text: Text for cancel button (default: "Cancel")
+///
+/// Callbacks:
+/// - confirmed: Emitted when OK/confirm button is clicked
+/// - cancelled: Emitted when Cancel button is clicked or dialog is dismissed
+export component FluentDialog inherits Dialog {
+    in property <string> dialog-title: "Dialog";
+    in property <string> message: "";
+    in property <bool> show-cancel: true;
+    in property <string> confirm-text: "OK";
+    in property <string> cancel-text: "Cancel";
+
+    callback confirmed();
+    callback cancelled();
+
+    // Dialog sizing
+    preferred-width: 400px;
+    max-width: 500px;
+
+    // Modal backdrop
+    Rectangle {
+        background: #00000080;  // 50% black for dimmed backdrop
+        width: 100%;
+        height: 100%;
+    }
+
+    // Dialog content card
+    FluentCard {
+        title: root.dialog-title;
+        width: root.preferred-width;
+
+        // Vertically center the dialog
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        // Drop shadow for elevation
+        drop-shadow-blur: FluentPalette.elevation-high;
+        drop-shadow-color: #00000060;
+        drop-shadow-offset-y: 8px;
+
+        VerticalLayout {
+            spacing: FluentPalette.spacing-lg;
+
+            // Message text
+            Text {
+                text: root.message;
+                color: FluentPalette.text-primary;
+                font-size: FluentTypography.body;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+
+            // Button row
+            HorizontalLayout {
+                spacing: FluentPalette.spacing-sm;
+                alignment: end;
+
+                // Cancel button (optional)
+                if root.show-cancel: FluentButton {
+                    text: root.cancel-text;
+                    primary: false;
+                    clicked => {
+                        root.cancelled();
+                    }
+                }
+
+                // Confirm button
+                FluentButton {
+                    text: root.confirm-text;
+                    primary: true;
+                    clicked => {
+                        root.confirmed();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Progress dialog
+///
+/// A dialog showing progress of an operation with a progress bar.
+export component FluentProgressDialog inherits Dialog {
+    in property <string> dialog-title: "Processing...";
+    in property <string> message: "Please wait...";
+    in property <float> progress: 0.0;  // 0.0 to 1.0
+    in property <bool> show-cancel: false;
+    in property <string> current-item: "";
+
+    callback cancelled();
+
+    preferred-width: 450px;
+
+    // Modal backdrop
+    Rectangle {
+        background: #00000080;
+        width: 100%;
+        height: 100%;
+    }
+
+    // Dialog content
+    FluentCard {
+        title: root.dialog-title;
+        width: root.preferred-width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        drop-shadow-blur: FluentPalette.elevation-high;
+        drop-shadow-color: #00000060;
+        drop-shadow-offset-y: 8px;
+
+        VerticalLayout {
+            spacing: FluentPalette.spacing-md;
+
+            // Message
+            Text {
+                text: root.message;
+                color: FluentPalette.text-primary;
+                font-size: FluentTypography.body;
+            }
+
+            // Current item (if provided)
+            if root.current-item != "": Text {
+                text: root.current-item;
+                color: FluentPalette.text-secondary;
+                font-size: FluentTypography.caption;
+            }
+
+            // Progress bar container
+            Rectangle {
+                height: 4px;
+                background: FluentPalette.surface-secondary;
+                border-radius: 2px;
+
+                // Progress fill
+                Rectangle {
+                    height: parent.height;
+                    width: parent.width * root.progress;
+                    background: FluentPalette.accent;
+                    border-radius: parent.border-radius;
+
+                    // Smooth progress animation
+                    animate width {
+                        duration: FluentAnimation.fast;
+                        easing: FluentAnimation.standard-easing;
+                    }
+                }
+            }
+
+            // Progress percentage
+            Text {
+                text: Math.round(root.progress * 100) + "%";
+                color: FluentPalette.text-secondary;
+                font-size: FluentTypography.caption;
+                horizontal-alignment: center;
+            }
+
+            // Cancel button (optional)
+            if root.show-cancel: HorizontalLayout {
+                alignment: center;
+
+                FluentButton {
+                    text: "Cancel";
+                    clicked => {
+                        root.cancelled();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Message dialog
+///
+/// A simple dialog for displaying information with only an OK button.
+export component FluentMessageDialog inherits Dialog {
+    in property <string> dialog-title: "Information";
+    in property <string> message: "";
+    in property <string> ok-text: "OK";
+
+    callback confirmed();
+
+    preferred-width: 400px;
+
+    Rectangle {
+        background: #00000080;
+        width: 100%;
+        height: 100%;
+    }
+
+    FluentCard {
+        title: root.dialog-title;
+        width: root.preferred-width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        drop-shadow-blur: FluentPalette.elevation-high;
+        drop-shadow-color: #00000060;
+        drop-shadow-offset-y: 8px;
+
+        VerticalLayout {
+            spacing: FluentPalette.spacing-lg;
+
+            Text {
+                text: root.message;
+                color: FluentPalette.text-primary;
+                font-size: FluentTypography.body;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: center;
+
+                FluentButton {
+                    text: root.ok-text;
+                    primary: true;
+                    clicked => {
+                        root.confirmed();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Error dialog
+///
+/// A specialized dialog for displaying errors with distinctive styling.
+export component FluentErrorDialog inherits Dialog {
+    in property <string> dialog-title: "Error";
+    in property <string> message: "";
+    in property <string> error-details: "";  // Optional technical details
+
+    callback confirmed();
+
+    preferred-width: 450px;
+
+    Rectangle {
+        background: #00000080;
+        width: 100%;
+        height: 100%;
+    }
+
+    FluentCard {
+        title: root.dialog-title;
+        width: root.preferred-width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        drop-shadow-blur: FluentPalette.elevation-high;
+        drop-shadow-color: #00000060;
+        drop-shadow-offset-y: 8px;
+
+        VerticalLayout {
+            spacing: FluentPalette.spacing-md;
+
+            // Error icon (simple circle with X)
+            Rectangle {
+                width: 48px;
+                height: 48px;
+                border-radius: 24px;
+                background: FluentPalette.error;
+
+                // X mark
+                Text {
+                    text: "✕";
+                    color: FluentPalette.text-on-accent;
+                    font-size: 24px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Error message
+            Text {
+                text: root.message;
+                color: FluentPalette.text-primary;
+                font-size: FluentTypography.body;
+                wrap: word-wrap;
+            }
+
+            // Technical details (if provided)
+            if root.error-details != "": Rectangle {
+                background: FluentPalette.surface-secondary;
+                border-radius: FluentPalette.corner-radius;
+                padding: FluentPalette.spacing-sm;
+
+                Text {
+                    text: root.error-details;
+                    color: FluentPalette.text-secondary;
+                    font-size: FluentTypography.caption;
+                    wrap: word-wrap;
+                }
+            }
+
+            // OK button
+            HorizontalLayout {
+                alignment: center;
+
+                FluentButton {
+                    text: "OK";
+                    primary: true;
+                    clicked => {
+                        root.confirmed();
+                    }
+                }
+            }
+        }
+    }
+}

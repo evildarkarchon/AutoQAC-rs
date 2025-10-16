@@ -1,25 +1,396 @@
 // Main Slint UI file for AutoQAC
 //
-// This is a minimal placeholder for Phase 1.
-// Full Fluent Design implementation will come in Phase 4.
+// Complete Fluent Design implementation for the AutoQAC application.
+// This provides a modern, Windows 11-style interface for batch cleaning
+// Bethesda game plugins using xEdit.
+
+import { FluentPalette, FluentTypography, FluentLayout } from "fluent/styles.slint";
+import { FluentButton } from "fluent/button.slint";
+import { FluentCard } from "fluent/card.slint";
+import { FluentLineEdit } from "fluent/input.slint";
+import { FluentCheckBox } from "fluent/checkbox.slint";
 
 export component MainWindow inherits Window {
     title: "AutoQAC - Automatic Quick Auto Clean";
-    preferred-width: 800px;
-    preferred-height: 600px;
+    background: FluentPalette.background;
+    preferred-width: 900px;
+    preferred-height: 750px;
+    min-width: 700px;
+    min-height: 600px;
+
+    // ========================================================================
+    // Properties - Bound to Rust State
+    // ========================================================================
+
+    // Configuration paths
+    in-out property <string> load-order-path: "";
+    in-out property <string> xedit-exe-path: "";
+    in-out property <string> mo2-exe-path: "";
+
+    // Runtime state
+    in-out property <bool> is-cleaning: false;
+    in-out property <int> progress-current: 0;
+    in-out property <int> progress-total: 0;
+    in-out property <string> current-plugin: "";
+    in-out property <string> current-operation: "";
+
+    // Settings
+    in-out property <bool> mo2-mode: false;
+    in-out property <bool> partial-forms-enabled: false;
+
+    // Results
+    in-out property <int> cleaned-count: 0;
+    in-out property <int> failed-count: 0;
+    in-out property <int> skipped-count: 0;
+
+    // ========================================================================
+    // Callbacks - Handled by Rust GUI Controller
+    // ========================================================================
+
+    callback start-cleaning();
+    callback stop-cleaning();
+    callback browse-load-order();
+    callback browse-xedit();
+    callback browse-mo2();
+    callback mo2-mode-toggled();
+    callback partial-forms-toggled();
+
+    // ========================================================================
+    // Main UI Layout
+    // ========================================================================
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 16px;
+        padding-left: FluentLayout.container-padding;
+        padding-right: FluentLayout.container-padding;
+        padding-top: FluentLayout.container-padding;
+        padding-bottom: FluentLayout.container-padding;
+        spacing: FluentLayout.section-spacing;
 
-        Text {
-            text: "AutoQAC";
-            font-size: 24px;
+        // ====================================================================
+        // Header Section
+        // ====================================================================
+
+        HorizontalLayout {
+            spacing: FluentPalette.spacing-md;
+
+            // App title
+            VerticalLayout {
+                alignment: start;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: "AutoQAC";
+                    font-size: FluentTypography.title-large;
+                    font-weight: FluentTypography.weight-bold;
+                    color: FluentPalette.text-primary;
+                }
+
+                Text {
+                    text: "Automatic Quick Auto Clean for Bethesda Game Plugins";
+                    font-size: FluentTypography.body;
+                    color: FluentPalette.text-secondary;
+                }
+            }
+
+            // Version/status badge (optional)
+            Rectangle {
+                width: 60px;
+                height: 24px;
+                border-radius: 12px;
+                background: FluentPalette.surface;
+                border-width: FluentLayout.border-thin;
+                border-color: FluentPalette.card-stroke;
+
+                Text {
+                    text: "v3.0";
+                    font-size: FluentTypography.caption;
+                    color: FluentPalette.text-secondary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
         }
 
-        Text {
-            text: "Phase 1: Foundation - Core types and configuration loading complete";
-            font-size: 14px;
+        // ====================================================================
+        // Configuration Card
+        // ====================================================================
+
+        FluentCard {
+            title: "Configuration";
+
+            VerticalLayout {
+                spacing: FluentPalette.spacing-md;
+
+                // Load Order Path
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Text {
+                        text: "Load Order:";
+                        vertical-alignment: center;
+                        min-width: 120px;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+
+                    FluentLineEdit {
+                        text <=> load-order-path;
+                        placeholder: "Path to plugins.txt";
+                        enabled: !is-cleaning;
+                        horizontal-stretch: 1;
+                    }
+
+                    FluentButton {
+                        text: "Browse";
+                        enabled: !is-cleaning;
+                        max-width: 100px;
+                        clicked => { browse-load-order(); }
+                    }
+                }
+
+                // xEdit Executable Path
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Text {
+                        text: "xEdit:";
+                        vertical-alignment: center;
+                        min-width: 120px;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+
+                    FluentLineEdit {
+                        text <=> xedit-exe-path;
+                        placeholder: "Path to SSEEdit.exe / FO4Edit.exe";
+                        enabled: !is-cleaning;
+                        horizontal-stretch: 1;
+                    }
+
+                    FluentButton {
+                        text: "Browse";
+                        enabled: !is-cleaning;
+                        max-width: 100px;
+                        clicked => { browse-xedit(); }
+                    }
+                }
+
+                // MO2 Path (conditional - only shown if MO2 mode is enabled)
+                if mo2-mode: HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Text {
+                        text: "Mod Organizer 2:";
+                        vertical-alignment: center;
+                        min-width: 120px;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+
+                    FluentLineEdit {
+                        text <=> mo2-exe-path;
+                        placeholder: "Path to ModOrganizer.exe";
+                        enabled: !is-cleaning;
+                        horizontal-stretch: 1;
+                    }
+
+                    FluentButton {
+                        text: "Browse";
+                        enabled: !is-cleaning;
+                        max-width: 100px;
+                        clicked => { browse-mo2(); }
+                    }
+                }
+            }
+        }
+
+        // ====================================================================
+        // Options Card
+        // ====================================================================
+
+        FluentCard {
+            title: "Options";
+
+            HorizontalLayout {
+                spacing: FluentPalette.spacing-xl;
+
+                FluentCheckBox {
+                    text: "Use Mod Organizer 2";
+                    checked <=> mo2-mode;
+                    enabled: !is-cleaning;
+                    toggled => { mo2-mode-toggled(); }
+                }
+
+                FluentCheckBox {
+                    text: "Enable Partial Forms (Experimental)";
+                    checked <=> partial-forms-enabled;
+                    enabled: !is-cleaning;
+                    toggled => { partial-forms-toggled(); }
+                }
+            }
+        }
+
+        // ====================================================================
+        // Progress Card (only shown during cleaning)
+        // ====================================================================
+
+        if is-cleaning: FluentCard {
+            title: "Cleaning Progress";
+
+            VerticalLayout {
+                spacing: FluentPalette.spacing-md;
+
+                // Progress status text
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Text {
+                        text: "Progress:";
+                        color: FluentPalette.text-secondary;
+                        font-size: FluentTypography.body;
+                    }
+
+                    Text {
+                        text: progress-current + " / " + progress-total;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                        font-weight: FluentTypography.weight-semibold;
+                    }
+                }
+
+                // Progress bar
+                Rectangle {
+                    height: 6px;
+                    background: FluentPalette.surface-secondary;
+                    border-radius: 3px;
+
+                    // Progress fill
+                    Rectangle {
+                        height: parent.height;
+                        width: progress-total > 0 ? (parent.width * progress-current / progress-total) : 0px;
+                        background: FluentPalette.accent;
+                        border-radius: parent.border-radius;
+
+                        animate width {
+                            duration: 200ms;
+                            easing: ease-out;
+                        }
+                    }
+                }
+
+                // Current plugin being processed
+                if current-plugin != "": Text {
+                    text: "Processing: " + current-plugin;
+                    color: FluentPalette.text-secondary;
+                    font-size: FluentTypography.caption;
+                }
+
+                // Current operation
+                if current-operation != "": Text {
+                    text: current-operation;
+                    color: FluentPalette.text-tertiary;
+                    font-size: FluentTypography.caption;
+                }
+            }
+        }
+
+        // ====================================================================
+        // Results Summary (shown after cleaning completes)
+        // ====================================================================
+
+        if !is-cleaning && (cleaned-count > 0 || failed-count > 0): FluentCard {
+            title: "Summary";
+
+            HorizontalLayout {
+                spacing: FluentPalette.spacing-xl;
+
+                // Cleaned count
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 6px;
+                        background: FluentPalette.success;
+                    }
+
+                    Text {
+                        text: "Cleaned: " + cleaned-count;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+                }
+
+                // Failed count
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 6px;
+                        background: FluentPalette.error;
+                    }
+
+                    Text {
+                        text: "Failed: " + failed-count;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+                }
+
+                // Skipped count
+                HorizontalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 6px;
+                        background: FluentPalette.warning;
+                    }
+
+                    Text {
+                        text: "Skipped: " + skipped-count;
+                        color: FluentPalette.text-primary;
+                        font-size: FluentTypography.body;
+                    }
+                }
+            }
+        }
+
+        // Spacer to push buttons to bottom
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        // ====================================================================
+        // Control Buttons (Bottom Section)
+        // ====================================================================
+
+        HorizontalLayout {
+            spacing: FluentPalette.spacing-md;
+            alignment: end;
+
+            // Stop button (only enabled during cleaning)
+            FluentButton {
+                text: "Stop";
+                enabled: is-cleaning;
+                clicked => { stop-cleaning(); }
+            }
+
+            // Start/Cleaning button
+            FluentButton {
+                text: is-cleaning ? "Cleaning..." : "Start Cleaning";
+                primary: true;
+                enabled: !is-cleaning && load-order-path != "" && xedit-exe-path != "";
+                clicked => {
+                    if (!is-cleaning) {
+                        start-cleaning();
+                    }
+                }
+            }
         }
     }
 }

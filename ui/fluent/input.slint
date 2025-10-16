@@ -1,0 +1,198 @@
+// Fluent Design Text Input Component
+//
+// A text input component following Microsoft Fluent Design principles with:
+// - Focus states with animated borders
+// - Placeholder text support
+// - Disabled state styling
+// - Smooth transitions
+//
+// Usage:
+//   FluentLineEdit {
+//       text: "Current value";
+//       placeholder: "Enter path...";
+//   }
+
+import { FluentPalette, FluentAnimation, FluentTypography, FluentLayout } from "styles.slint";
+
+/// Fluent Design text input component
+///
+/// A single-line text input field with Fluent Design styling and behavior.
+/// Features focus indication, placeholder text, and smooth transitions.
+///
+/// Properties:
+/// - text: The current text value (bindable with <=>)
+/// - placeholder: Placeholder text shown when empty
+/// - enabled: If false, input is disabled (default: true)
+/// - read-only: If true, text cannot be edited (default: false)
+export component FluentLineEdit inherits Rectangle {
+    // Public properties
+    in-out property <string> text: "";
+    in property <string> placeholder: "";
+    in property <bool> enabled: true;
+    in property <bool> read-only: false;
+
+    // Callbacks
+    callback edited(string);  // Emitted when text changes
+    callback accepted(string);  // Emitted when Enter is pressed
+
+    // Internal state
+    private property <bool> input-focused: input.has-focus;
+
+    // Styling
+    min-height: FluentPalette.input-min-height;
+    background: root.enabled ? FluentPalette.surface : FluentPalette.card-background;
+    border-radius: FluentPalette.input-corner-radius;
+
+    // Border width changes on focus (2px when focused, 1px otherwise)
+    border-width: root.input-focused ? FluentLayout.border-thick : FluentLayout.border-thin;
+    border-color: root.input-focused ? FluentPalette.accent : FluentPalette.card-stroke;
+
+    // Smooth border transitions
+    animate border-color { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+    animate border-width { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+
+    // Subtle focus glow (optional enhancement)
+    // drop-shadow-blur: root.input-focused ? 4px : 0px;
+    // drop-shadow-color: root.input-focused ? #60CDFF40 : transparent;
+
+    // Input content (using absolute positioning for placeholder overlay)
+    Rectangle {
+        x: FluentPalette.spacing-md;
+        y: 6px;
+        width: parent.width - FluentPalette.spacing-md * 2;
+        height: parent.height - 12px;
+
+        // Text input field
+        input := TextInput {
+            width: parent.width;
+            height: parent.height;
+            text <=> root.text;
+            enabled: root.enabled && !root.read-only;
+            color: root.enabled ? FluentPalette.text-primary : FluentPalette.text-disabled;
+            font-size: FluentTypography.body;
+            vertical-alignment: center;
+            single-line: true;
+
+            // Emit callbacks
+            edited => {
+                root.edited(self.text);
+            }
+
+            accepted => {
+                root.accepted(self.text);
+            }
+        }
+
+        // Placeholder text (shown when input is empty and not focused)
+        if root.text == "" && !root.input-focused: Text {
+            text: root.placeholder;
+            color: FluentPalette.text-tertiary;
+            font-size: FluentTypography.body;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+}
+
+/// Fluent Design multiline text input component
+///
+/// A multi-line text input area with Fluent Design styling.
+/// Useful for longer text entries like descriptions or notes.
+export component FluentTextArea inherits Rectangle {
+    // Public properties
+    in-out property <string> text: "";
+    in property <string> placeholder: "";
+    in property <bool> enabled: true;
+    in property <bool> read-only: false;
+    in property <length> textarea-min-height: 100px;
+
+    // Callbacks
+    callback edited(string);
+
+    // Internal state
+    private property <bool> input-focused: input.has-focus;
+
+    // Styling
+    min-height: root.textarea-min-height;
+    background: root.enabled ? FluentPalette.surface : FluentPalette.card-background;
+    border-radius: FluentPalette.input-corner-radius;
+    border-width: root.input-focused ? FluentLayout.border-thick : FluentLayout.border-thin;
+    border-color: root.input-focused ? FluentPalette.accent : FluentPalette.card-stroke;
+
+    animate border-color { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+    animate border-width { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+
+    // Input content (using absolute positioning for placeholder overlay)
+    Rectangle {
+        x: FluentPalette.spacing-md;
+        y: FluentPalette.spacing-sm;
+        width: parent.width - FluentPalette.spacing-md * 2;
+        height: parent.height - FluentPalette.spacing-sm * 2;
+
+        // Text input field
+        input := TextInput {
+            width: parent.width;
+            height: parent.height;
+            text <=> root.text;
+            enabled: root.enabled && !root.read-only;
+            color: root.enabled ? FluentPalette.text-primary : FluentPalette.text-disabled;
+            font-size: FluentTypography.body;
+            vertical-alignment: top;
+            wrap: word-wrap;
+
+            edited => {
+                root.edited(self.text);
+            }
+        }
+
+        // Placeholder text
+        if root.text == "" && !root.input-focused: Text {
+            text: root.placeholder;
+            color: FluentPalette.text-tertiary;
+            font-size: FluentTypography.body;
+            vertical-alignment: top;
+            wrap: word-wrap;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+}
+
+/// Path input with browse button
+///
+/// A specialized input for file/folder paths with an integrated browse button.
+/// This combines FluentLineEdit with FluentButton for common path selection scenarios.
+export component FluentPathInput inherits Rectangle {
+    in-out property <string> path: "";
+    in property <string> placeholder: "Select path...";
+    in property <bool> enabled: true;
+
+    callback browse-clicked();
+
+    // Layout
+    HorizontalLayout {
+        spacing: FluentPalette.spacing-sm;
+
+        // Path input field
+        FluentLineEdit {
+            text <=> root.path;
+            placeholder: root.placeholder;
+            enabled: root.enabled;
+            horizontal-stretch: 1;
+        }
+
+        // Browse button
+        FluentButton {
+            text: "Browse...";
+            enabled: root.enabled;
+            max-width: 100px;
+            clicked => {
+                root.browse-clicked();
+            }
+        }
+    }
+}
+
+// Import button component for path input
+import { FluentButton } from "button.slint";

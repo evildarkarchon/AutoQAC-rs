@@ -8,6 +8,7 @@ pub mod logging;
 pub mod models;
 pub mod services;
 pub mod state;
+pub mod ui;
 
 // Re-export commonly used types for convenience
 pub use config::ConfigManager;

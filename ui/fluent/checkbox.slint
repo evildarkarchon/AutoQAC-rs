@@ -1,0 +1,214 @@
+// Fluent Design Checkbox Component
+//
+// A checkbox component following Microsoft Fluent Design principles with:
+// - Smooth check/uncheck animations
+// - Hover and pressed states
+// - Disabled state styling
+// - Label support
+//
+// Usage:
+//   FluentCheckBox {
+//       text: "Enable option";
+//       checked: true;
+//   }
+
+import { FluentPalette, FluentAnimation, FluentTypography, FluentLayout } from "styles.slint";
+
+/// Fluent Design checkbox component
+///
+/// A checkbox control with label following Fluent Design principles.
+///
+/// Properties:
+/// - text: Label text displayed next to the checkbox
+/// - checked: Current checked state (bindable with <=>)
+/// - enabled: If false, checkbox is disabled (default: true)
+///
+/// Callbacks:
+/// - toggled: Emitted when checkbox state changes
+export component FluentCheckBox inherits Rectangle {
+    // Public properties
+    in property <string> text: "";
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+
+    // Callback for state changes
+    callback toggled();
+
+    // Internal state
+    private property <bool> is-hovered: touch-area.has-hover && root.enabled;
+    private property <bool> is-pressed: touch-area.pressed && root.enabled;
+
+    // Layout
+    min-height: 32px;
+    horizontal-stretch: 0;
+
+    HorizontalLayout {
+        spacing: FluentPalette.spacing-sm;
+        alignment: start;
+
+        // Checkbox box
+        checkbox-box := Rectangle {
+            width: FluentPalette.checkbox-size;
+            height: FluentPalette.checkbox-size;
+            border-radius: FluentPalette.corner-radius;
+
+            // Background
+            background: {
+                if (!root.enabled) {
+                    FluentPalette.surface
+                } else if (root.checked) {
+                    root.is-pressed ? FluentPalette.accent-pressed :
+                    (root.is-hovered ? FluentPalette.accent-hover : FluentPalette.accent)
+                } else {
+                    root.is-pressed ? FluentPalette.surface-secondary :
+                    (root.is-hovered ? FluentPalette.surface-secondary : FluentPalette.surface)
+                }
+            };
+
+            // Border
+            border-width: root.checked ? 0px : FluentLayout.border-thin;
+            border-color: root.enabled ? FluentPalette.card-stroke : FluentPalette.accent-disabled;
+
+            // Smooth transitions
+            animate background {
+                duration: FluentAnimation.fast;
+                easing: FluentAnimation.standard-easing;
+            }
+
+            // Checkmark (only visible when checked)
+            if root.checked: Path {
+                // SVG checkmark path
+                // Simple checkmark using line segments
+                viewbox-width: 16;
+                viewbox-height: 16;
+
+                // Checkmark stroke
+                stroke: root.enabled ? FluentPalette.text-on-accent : FluentPalette.text-disabled;
+                stroke-width: 2px;
+
+                // Checkmark path (simplified)
+                MoveTo {
+                    x: 3;
+                    y: 8;
+                }
+                LineTo {
+                    x: 6;
+                    y: 11;
+                }
+                LineTo {
+                    x: 13;
+                    y: 4;
+                }
+
+                // Center the checkmark
+                x: (parent.width - 16px) / 2;
+                y: (parent.height - 16px) / 2;
+                width: 16px;
+                height: 16px;
+            }
+        }
+
+        // Label text
+        if root.text != "": Text {
+            text: root.text;
+            color: root.enabled ? FluentPalette.text-primary : FluentPalette.text-disabled;
+            font-size: FluentTypography.body;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+
+    // Touch area for interaction
+    touch-area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.checked = !root.checked;
+                root.toggled();
+            }
+        }
+    }
+}
+
+/// Fluent Design toggle switch component
+///
+/// A toggle switch (alternative to checkbox) with sliding animation.
+/// Useful for settings that have immediate effect.
+export component FluentToggleSwitch inherits Rectangle {
+    in property <string> text: "";
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+
+    callback toggled();
+
+    // Internal state
+    private property <bool> is-hovered: touch-area.has-hover && root.enabled;
+
+    // Layout
+    min-height: 32px;
+    horizontal-stretch: 0;
+
+    HorizontalLayout {
+        spacing: FluentPalette.spacing-md;
+        alignment: start;
+
+        // Switch track
+        track := Rectangle {
+            width: 44px;
+            height: 20px;
+            border-radius: 10px;
+
+            // Track background
+            background: {
+                if (!root.enabled) {
+                    FluentPalette.surface
+                } else if (root.checked) {
+                    root.is-hovered ? FluentPalette.accent-hover : FluentPalette.accent
+                } else {
+                    root.is-hovered ? FluentPalette.surface-secondary : FluentPalette.card-stroke
+                }
+            };
+
+            animate background {
+                duration: FluentAnimation.fast;
+                easing: FluentAnimation.standard-easing;
+            }
+
+            // Switch thumb (sliding circle)
+            thumb := Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: root.enabled ? FluentPalette.text-on-accent : FluentPalette.text-disabled;
+                y: 4px;
+
+                // Slide animation
+                x: root.checked ? 28px : 4px;
+                animate x {
+                    duration: FluentAnimation.normal;
+                    easing: ease-in-out;
+                }
+            }
+        }
+
+        // Label text
+        if root.text != "": Text {
+            text: root.text;
+            color: root.enabled ? FluentPalette.text-primary : FluentPalette.text-disabled;
+            font-size: FluentTypography.body;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+
+    // Touch area
+    touch-area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.checked = !root.checked;
+                root.toggled();
+            }
+        }
+    }
+}

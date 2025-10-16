@@ -2,6 +2,16 @@ use camino::Utf8PathBuf;
 use std::collections::HashSet;
 use std::time::Duration;
 
+/// Maximum number of concurrent xEdit subprocesses.
+///
+/// **IMPORTANT:** This is hardcoded to 1 because xEdit has file locking issues
+/// that prevent multiple instances from running simultaneously. Running multiple
+/// instances will not crash, but will result in undefined behavior due to
+/// concurrent file access.
+///
+/// This constraint is enforced in the CleaningService using a Semaphore.
+pub const MAX_CONCURRENT_XEDIT_PROCESSES: usize = 1;
+
 /// Single source of truth for all application state.
 ///
 /// This struct mirrors the Python AppState dataclass and contains all
@@ -42,7 +52,6 @@ pub struct AppState {
     pub mo2_mode: bool,
     pub partial_forms_enabled: bool,
     pub game_type: Option<String>,
-    pub max_concurrent_subprocesses: usize,
 }
 
 impl Default for AppState {
@@ -82,7 +91,6 @@ impl Default for AppState {
             mo2_mode: false,
             partial_forms_enabled: false,
             game_type: None,
-            max_concurrent_subprocesses: 3,
         }
     }
 }
@@ -155,7 +163,8 @@ mod tests {
         let state = AppState::default();
         assert!(!state.is_fully_configured());
         assert_eq!(state.cleaning_timeout, Duration::from_secs(300));
-        assert_eq!(state.max_concurrent_subprocesses, 3);
+        // MAX_CONCURRENT_XEDIT_PROCESSES is a module-level constant, not in AppState
+        assert_eq!(MAX_CONCURRENT_XEDIT_PROCESSES, 1);
     }
 
     #[test]

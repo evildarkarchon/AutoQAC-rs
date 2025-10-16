@@ -1,0 +1,142 @@
+// Fluent Design Card Component
+//
+// A card component following Microsoft Fluent Design principles with:
+// - Elevated surface with subtle shadow
+// - Optional title header
+// - Consistent padding and spacing
+// - Acrylic-like visual treatment
+//
+// Usage:
+//   FluentCard {
+//       title: "Settings";
+//       // Card content goes here
+//       Text { text: "Card body"; }
+//   }
+
+import { FluentPalette, FluentLayout, FluentTypography } from "styles.slint";
+
+/// Fluent Design card component
+///
+/// A container component that provides an elevated surface with consistent
+/// styling following Fluent Design principles. Supports an optional title
+/// and accepts children for card content.
+///
+/// Properties:
+/// - title: Optional title text displayed at the top of the card
+/// - spacing: Vertical spacing between child elements (default: 12px)
+export component FluentCard inherits Rectangle {
+    // Public properties
+    in property <string> title: "";
+    in property <length> spacing: FluentPalette.spacing-md;
+
+    // Styling - Card appearance
+    background: FluentPalette.card-background;
+    border-radius: FluentPalette.card-corner-radius;
+    border-width: FluentLayout.border-thin;
+    border-color: FluentPalette.card-stroke;
+
+    // Elevation - Acrylic-like effect with shadow
+    // Using lighter shadow for dark theme to avoid excessive depth
+    drop-shadow-blur: FluentPalette.elevation-shadow;
+    drop-shadow-color: #00000030;  // 19% black opacity
+    drop-shadow-offset-y: 2px;
+
+    // Smooth shadow transitions on hover (future enhancement)
+    // For now, static elevation
+
+    // Card content layout
+    VerticalLayout {
+        padding-left: FluentLayout.card-padding;
+        padding-right: FluentLayout.card-padding;
+        padding-top: FluentLayout.card-padding;
+        padding-bottom: FluentLayout.card-padding;
+        spacing: root.spacing;
+
+        // Optional title section
+        if root.title != "": HorizontalLayout {
+            // Title text
+            Text {
+                text: root.title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
+        // Card content - children will be placed here
+        @children
+    }
+}
+
+/// Variant: Interactive Card
+///
+/// A card that responds to hover and click events.
+/// Useful for navigation cards or clickable items.
+export component FluentInteractiveCard inherits Rectangle {
+    in property <string> title: "";
+    in property <length> spacing: FluentPalette.spacing-md;
+    in property <bool> enabled: true;
+
+    callback clicked();
+
+    // Internal state
+    private property <bool> is-hovered: touch-area.has-hover && root.enabled;
+    private property <bool> is-pressed: touch-area.pressed && root.enabled;
+
+    // Styling - Card appearance with interactive states
+    background: root.is-pressed ?
+        FluentPalette.surface-secondary :
+        (root.is-hovered ? FluentPalette.surface : FluentPalette.card-background);
+    border-radius: FluentPalette.card-corner-radius;
+    border-width: FluentLayout.border-thin;
+    border-color: root.is-hovered ? FluentPalette.accent : FluentPalette.card-stroke;
+
+    // Animate state transitions
+    animate background { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+    animate border-color { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+
+    // Elevation - More prominent on hover
+    drop-shadow-blur: root.is-hovered ? FluentPalette.elevation-high : FluentPalette.elevation-shadow;
+    drop-shadow-color: #00000030;
+    drop-shadow-offset-y: root.is-hovered ? 4px : 2px;
+
+    animate drop-shadow-blur { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+    animate drop-shadow-offset-y { duration: FluentAnimation.fast; easing: FluentAnimation.standard-easing; }
+
+    // Touch area for interaction
+    touch-area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
+    }
+
+    // Card content layout
+    VerticalLayout {
+        padding-left: FluentLayout.card-padding;
+        padding-right: FluentLayout.card-padding;
+        padding-top: FluentLayout.card-padding;
+        padding-bottom: FluentLayout.card-padding;
+        spacing: root.spacing;
+
+        // Optional title section
+        if root.title != "": HorizontalLayout {
+            Text {
+                text: root.title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
+        // Card content
+        @children
+    }
+}
+
+// Import animation constants
+import { FluentAnimation } from "styles.slint";

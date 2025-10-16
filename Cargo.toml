@@ -10,7 +10,7 @@ repository = "https://github.com/evildarkarchon/XEdit-PACT"
 
 [dependencies]
 # GUI Framework
-slint = "1.9"
+slint = { version = "1.13", features = ["backend-winit", "renderer-skia"] }
 
 # Async Runtime (for subprocess management)
 tokio = { version = "1.41", features = ["full"] }
@@ -18,7 +18,7 @@ tokio = { version = "1.41", features = ["full"] }
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml_ng = "0.10"  # Maintained serde YAML fork
-config = "0.14"     # Structured configuration management
+config = "0.15.18"     # Structured configuration management
 
 # Logging
 tracing = "0.1"
@@ -36,7 +36,7 @@ camino = "1.1"  # UTF-8 paths (Windows-safe)
 indexmap = { version = "2.0", features = ["serde"] }  # Preserve insertion order for configs
 
 # File dialogs
-rfd = "0.14"  # Native file dialogs
+rfd = "0.15.4"  # Native file dialogs
 
 # Regex for parsing
 regex = "1.10"
@@ -46,7 +46,7 @@ regex = "1.10"
 tokio-test = "0.4"
 tempfile = "3.14"
 proptest = "1.0"  # Property-based testing
-criterion = "0.5"  # Benchmarking
+criterion = "0.7.0"  # Benchmarking
 mockall = "0.13"  # Mocking
 
 [build-dependencies]
