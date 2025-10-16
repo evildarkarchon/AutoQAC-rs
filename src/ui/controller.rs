@@ -105,6 +105,17 @@ impl GuiController {
         self.ui.run()
     }
 
+    /// Request graceful cancellation of ongoing operations
+    ///
+    /// Sends a cancellation signal through the watch channel and updates the state manager
+    /// to stop cleaning operations. This provides a coordinated shutdown mechanism that
+    /// works through both the watch channel and state flags.
+    pub fn request_cancel(&self) {
+        tracing::info!("Cancellation requested via watch channel and state manager");
+        let _ = self.cancel_tx.send(true);
+        self.state_manager.stop_cleaning();
+    }
+
     /// Synchronize UI with current state
     ///
     /// This is called once at startup to initialize the UI with the current state.
@@ -455,11 +466,11 @@ impl GuiController {
     /// 3. Creates CleaningService and Semaphore for serial execution
     /// 4. Cleans each plugin sequentially
     /// 5. Updates UI with progress and results
-    /// 6. Supports cancellation via watch channel
+    /// 6. Supports immediate cancellation via watch channel (no polling)
     async fn run_cleaning_workflow(
         state: Arc<StateManager>,
         bridge: crate::ui::bridge::EventLoopBridgeHandle<MainWindow>,
-        mut cancel_rx: watch::Receiver<bool>,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<()> {
         tracing::info!("Starting cleaning workflow");
 
@@ -505,27 +516,27 @@ impl GuiController {
         let mut tasks = Vec::new();
 
         for (index, plugin) in plugins_to_clean.iter().enumerate() {
-            // Check for cancellation before starting next plugin
-            if !state.read(|s| s.is_cleaning) {
-                tracing::warn!("Cleaning cancelled by user, stopping after plugin {}", index);
-                break;
-            }
-
             let plugin = plugin.clone();
             let state_clone = state.clone();
             let bridge_clone = bridge.clone();
             let service_clone = service.clone();
             let semaphore_clone = semaphore.clone();
+            let cancel_rx_clone = cancel_rx.clone();
 
             let task = tokio::spawn(async move {
-                // Acquire semaphore permit (blocks until available)
-                let _permit = semaphore_clone.acquire().await.unwrap();
+                // Clone cancel receiver for use in select block
+                let mut cancel_rx_for_permit = cancel_rx_clone.clone();
 
-                // Check for cancellation after acquiring permit
-                if !state_clone.read(|s| s.is_cleaning) {
-                    tracing::warn!("Cleaning cancelled, skipping plugin: {}", plugin);
-                    return;
-                }
+                // Race between acquiring permit and cancellation
+                let _permit = tokio::select! {
+                    permit = semaphore_clone.acquire() => {
+                        permit.unwrap()
+                    }
+                    _ = cancel_rx_for_permit.changed() => {
+                        tracing::warn!("Cleaning cancelled before starting plugin: {}", plugin);
+                        return;
+                    }
+                };
 
                 tracing::info!("Cleaning plugin {}: {}", index + 1, plugin);
 
@@ -536,7 +547,7 @@ impl GuiController {
                 );
 
                 // Clean the plugin with timeout and cancellation awareness
-                match Self::clean_plugin(&plugin, &state_clone, &service_clone).await {
+                match Self::clean_plugin(&plugin, &state_clone, &service_clone, cancel_rx_clone).await {
                     Ok((status, message)) => {
                         tracing::info!("Plugin {} completed: {} - {}", plugin, status, message);
                         state_clone.add_plugin_result(plugin.clone(), &status, message.clone());
@@ -625,15 +636,19 @@ impl GuiController {
     /// This performs the full cleaning cycle for one plugin:
     /// 1. Get log paths
     /// 2. Clear old logs
-    /// 3. Build and execute cleaning command
+    /// 3. Build and execute cleaning command (with cancellation support)
     /// 4. Check for errors
     /// 5. Parse results
+    ///
+    /// Uses `tokio::select!` to race the cleaning operation against cancellation,
+    /// providing immediate responsiveness to user cancellation requests.
     ///
     /// Returns (status, message) tuple
     async fn clean_plugin(
         plugin: &str,
         state: &StateManager,
         service: &CleaningService,
+        mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<(String, String)> {
         // Get configuration from state
         let (xedit_exe, game_type, mo2_exe, partial_forms, timeout, _mo2_install, _xedit_install) = state.read(|s| {
@@ -667,8 +682,17 @@ impl GuiController {
 
         tracing::debug!("Executing command: {}", command);
 
-        // Execute cleaning command
-        let exit_code = service.execute_cleaning_command(&command, timeout).await?;
+        // Execute cleaning command with cancellation support
+        // Race the cleaning operation against cancellation for immediate responsiveness
+        let exit_code = tokio::select! {
+            result = service.execute_cleaning_command(&command, timeout) => {
+                result?
+            }
+            _ = cancel_rx.changed() => {
+                tracing::warn!("Cleaning cancelled during execution of plugin: {}", plugin);
+                return Err(anyhow!("Cleaning cancelled by user"));
+            }
+        };
 
         // Check exception log for errors
         if service.check_exception_log(&exception_log)? {

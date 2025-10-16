@@ -320,6 +320,54 @@ impl StateManager {
         self.update(settings_fn)
     }
 
+    /// Load configuration from UserConfig
+    ///
+    /// This populates AppState fields from the user configuration file,
+    /// setting paths, timeouts, and user preferences.
+    ///
+    /// # Arguments
+    /// * `user_config` - The loaded user configuration
+    ///
+    /// # Returns
+    /// A vector of StateChange events that were emitted
+    pub fn load_from_user_config(&self, user_config: &crate::models::UserConfig) -> Vec<StateChange> {
+        use std::time::Duration;
+
+        self.update(|state| {
+            let settings = &user_config.pact_settings;
+
+            // Load path configurations
+            if !settings.loadorder_txt.is_empty() {
+                state.load_order_path = Some(Utf8PathBuf::from(&settings.loadorder_txt));
+                state.is_load_order_configured = true;
+            }
+
+            if !settings.xedit_exe.is_empty() {
+                state.xedit_exe_path = Some(Utf8PathBuf::from(&settings.xedit_exe));
+                state.is_xedit_configured = true;
+            }
+
+            if !settings.mo2_exe.is_empty() {
+                state.mo2_exe_path = Some(Utf8PathBuf::from(&settings.mo2_exe));
+                state.is_mo2_configured = true;
+            }
+
+            // Load settings
+            state.partial_forms_enabled = settings.partial_forms;
+            state.cleaning_timeout = Duration::from_secs(settings.cleaning_timeout as u64);
+            state.journal_expiration = settings.journal_expiration;
+
+            tracing::info!(
+                "Loaded user config: load_order={}, xedit={}, mo2={}, partial_forms={}, timeout={}s",
+                state.is_load_order_configured,
+                state.is_xedit_configured,
+                state.is_mo2_configured,
+                state.partial_forms_enabled,
+                settings.cleaning_timeout
+            );
+        })
+    }
+
     /// Get an Arc reference to the state for use in worker threads
     ///
     /// Use this when you need to share state across threads but want

@@ -41,9 +41,9 @@ fn main() -> Result<()> {
         main_config.pact_data.xedit_lists.len()
     );
 
-    // TODO: Phase 5 - Load user config into state
-    // For now, just log that it was loaded
-    tracing::debug!("User config loaded successfully");
+    // Load user config into state manager
+    state_manager.load_from_user_config(&user_config);
+    tracing::info!("User configuration loaded into state manager");
 
     // Create GUI controller
     // This wires up the Slint UI with state management and the tokio runtime
