@@ -1,13 +1,72 @@
-// AutoQAC - Automatic Quick Auto Clean for Bethesda Game Plugins
-//
-// Main entry point for the GUI application.
-// Phase 4: Complete Fluent Design UI with tokio/Slint event loop coordination
+//! AutoQAC - Automatic Quick Auto Clean for Bethesda Game Plugins
+//!
+//! Main entry point for the GUI application.
+//!
+//! # Overview
+//!
+//! This binary crate provides the Slint GUI frontend for AutoQAC. It initializes:
+//! - Logging infrastructure (file rotation + console output)
+//! - Tokio async runtime (4 worker threads for subprocess execution)
+//! - State management ([`StateManager`])
+//! - Configuration loading ([`ConfigManager`])
+//! - GUI controller ([`GuiController`] - bridges Slint UI with business logic)
+//!
+//! The application uses a hybrid threading model:
+//! - **Main thread**: Runs the Slint event loop (blocking, synchronous)
+//! - **Tokio workers**: Handle async operations (xEdit subprocess execution, file I/O)
+//! - **State listener**: Background std::thread for reactive UI updates
+//!
+//! # Execution Flow
+//!
+//! 1. Initialize logging → logs/autoqac_<timestamp>.log
+//! 2. Create tokio runtime with 4 worker threads
+//! 3. Create StateManager (Arc<RwLock<AppState>>)
+//! 4. Load YAML configurations from AutoQAC Data/
+//!    - AutoQAC Main.yaml → Game configs, skip lists
+//!    - AutoQAC Config.yaml or PACT Settings.yaml → User settings
+//! 5. Create GuiController (wires Slint UI to state and runtime)
+//! 6. Run Slint event loop (blocks until window closed)
+//! 7. Shutdown tokio runtime with 5s timeout
+//!
+//! # Configuration Files
+//!
+//! Expected in `AutoQAC Data/` directory:
+//! - `AutoQAC Main.yaml`: Game configurations, xEdit paths, skip lists
+//! - `AutoQAC Config.yaml` or `PACT Settings.yaml`: User preferences
+//! - `PACT Ignore.yaml`: Additional plugin ignore list (optional)
+//!
+//! # Platform
+//!
+//! Primary platform: Windows 10/11 (x86_64)
+//! Secondary: Cross-platform via Slint and tokio
 
 use anyhow::Result;
 use autoqac::ui::GuiController;
 use autoqac::{ConfigManager, StateManager, APP_NAME, VERSION};
 use std::sync::Arc;
 
+/// Main entry point for the AutoQAC GUI application
+///
+/// This function orchestrates the complete application lifecycle:
+/// 1. Logging setup
+/// 2. Tokio runtime initialization
+/// 3. State and configuration management
+/// 4. GUI launch and execution
+/// 5. Graceful shutdown
+///
+/// # Returns
+///
+/// - `Ok(())` if the application ran and exited normally
+/// - `Err(_)` if initialization or GUI execution failed
+///
+/// # Errors
+///
+/// This function can fail if:
+/// - Logging initialization fails (disk space, permissions)
+/// - Tokio runtime creation fails (system resources)
+/// - Configuration files are missing or invalid YAML
+/// - Slint UI initialization fails (graphics drivers, display)
+/// - GUI encounters a fatal error during execution
 fn main() -> Result<()> {
     // Setup logging with both file and console output
     autoqac::logging::setup_logging_with_console("logs", "autoqac", false, true)?;

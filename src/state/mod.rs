@@ -60,10 +60,24 @@ pub enum StateChange {
 /// Thread-safe state manager with event emission
 ///
 /// This is the central state management component that:
-/// - Provides thread-safe access to AppState via Arc<RwLock<T>>
-/// - Detects state changes and emits events
+/// - Provides thread-safe access to [`AppState`] via `Arc<RwLock<T>>`
+/// - Detects state changes and emits [`StateChange`] events
 /// - Validates state transitions
-/// - Supports subscribing to state changes via channels
+/// - Supports subscribing to state changes via tokio broadcast channels
+///
+/// # Usage
+///
+/// Always use `StateManager` instead of accessing [`AppState`] directly:
+/// - [`read()`](Self::read) for reading state without locking
+/// - [`update()`](Self::update) for mutations with automatic event emission
+/// - [`subscribe()`](Self::subscribe) for listening to state changes
+///
+/// # Related Types
+///
+/// - [`crate::models::AppState`]: The underlying state structure
+/// - [`StateChange`]: Event types emitted on state mutations
+/// - [`crate::config::ConfigManager`]: Loads configurations into state
+/// - [`crate::ui::controller::GuiController`]: Primary consumer of state events
 pub struct StateManager {
     /// The application state protected by RwLock for thread-safe access
     state: Arc<RwLock<AppState>>,

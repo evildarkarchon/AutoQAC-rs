@@ -94,11 +94,47 @@ pub enum CleaningError {
 }
 
 /// Service for cleaning plugins with xEdit
+///
+/// This service handles all aspects of executing xEdit's Quick Auto Clean (QAC) mode,
+/// including command construction, subprocess execution, and log parsing.
+///
+/// # Fields
+///
+/// The service pre-compiles regex patterns at construction time for performance:
+///
+/// - `udr_pattern`: Matches "Undeleting: ..." lines to count Undisabled References (UDRs)
+///   - Pattern: `Undeleting:\s*(.*)`
+///   - Example match: "Undeleting: \[00000D62\] <Skyrim.esm>"
+///
+/// - `itm_pattern`: Matches "Removing: ..." lines to count Identical To Master records (ITMs)
+///   - Pattern: `Removing:\s*(.*)`
+///   - Example match: "Removing: \[FormID\] <Plugin.esp>"
+///
+/// - `nvm_pattern`: Matches "Skipping: ..." lines to count deleted navmeshes
+///   - Pattern: `Skipping:\s*(.*)`
+///   - Example match: "Skipping: \[NavMesh\] <Plugin.esp>"
+///
+/// - `partial_form_pattern`: Matches "Making Partial Form: ..." for experimental partial forms
+///   - Pattern: `Making Partial Form:\s*(.*)`
+///   - Example match: "Making Partial Form: \[00000001\]"
+///
+/// # Design Philosophy
+///
+/// - **Stateless**: All operations take explicit parameters; no hidden state
+/// - **Framework-agnostic**: No GUI dependencies, works with any UI or CLI
+/// - **Testable**: Pure functions with predictable I/O
+/// - **Async**: Uses tokio for non-blocking subprocess execution and file I/O
 pub struct CleaningService {
-    // Patterns compiled once for performance
+    /// Regex for detecting "Undeleting: ..." lines (UDRs) in xEdit logs
     udr_pattern: Regex,
+
+    /// Regex for detecting "Removing: ..." lines (ITMs) in xEdit logs
     itm_pattern: Regex,
+
+    /// Regex for detecting "Skipping: ..." lines (deleted navmeshes) in xEdit logs
     nvm_pattern: Regex,
+
+    /// Regex for detecting "Making Partial Form: ..." lines in xEdit logs
     partial_form_pattern: Regex,
 }
 

@@ -512,7 +512,31 @@ impl GuiController {
             MAX_CONCURRENT_XEDIT_PROCESSES
         );
 
-        // Clean each plugin sequentially with cancellation support
+        // ===== CANCELLATION STRATEGY =====
+        //
+        // The workflow supports immediate cancellation via a watch channel (tokio::sync::watch).
+        // Cancellation is event-driven, NOT polling-based, using tokio::select! to race operations.
+        //
+        // Cancellation Points:
+        // 1. Before acquiring semaphore permit (task queued but not started)
+        // 2. During subprocess execution (xEdit process running)
+        //
+        // Why spawn all tasks at once?
+        // - Tasks race for the single semaphore permit (MAX_CONCURRENT_XEDIT_PROCESSES = 1)
+        // - This enforces serial execution (only 1 xEdit at a time)
+        // - Queued tasks can cancel immediately without waiting for previous plugins to complete
+        // - Provides better responsiveness: user clicks "Stop" → ALL pending tasks cancel instantly
+        //
+        // Alternative (sequential spawn):
+        // - for plugin in plugins { spawn; await task; } → Slower cancellation, worse UX
+        // - User clicks "Stop" → must wait for current plugin to finish before cancelling next
+        //
+        // Current approach:
+        // - All tasks spawned immediately → queued on semaphore
+        // - Cancellation signal sent → ALL queued tasks detect it instantly
+        // - Running task detects cancellation during subprocess execution
+        // ===== END CANCELLATION STRATEGY =====
+
         let mut tasks = Vec::new();
 
         for (index, plugin) in plugins_to_clean.iter().enumerate() {
@@ -527,14 +551,15 @@ impl GuiController {
                 // Clone cancel receiver for use in select block
                 let mut cancel_rx_for_permit = cancel_rx_clone.clone();
 
-                // Race between acquiring permit and cancellation
+                // CANCELLATION POINT 1: Race between acquiring permit and cancellation
+                // If user clicks "Stop" while this task is queued, cancel immediately
                 let _permit = tokio::select! {
                     permit = semaphore_clone.acquire() => {
                         permit.unwrap()
                     }
                     _ = cancel_rx_for_permit.changed() => {
                         tracing::warn!("Cleaning cancelled before starting plugin: {}", plugin);
-                        return;
+                        return;  // Exit task without processing this plugin
                     }
                 };
 
@@ -546,7 +571,8 @@ impl GuiController {
                     format!("Cleaning {}...", plugin),
                 );
 
-                // Clean the plugin with timeout and cancellation awareness
+                // CANCELLATION POINT 2: Inside clean_plugin() via tokio::select!
+                // Races xEdit subprocess execution against cancellation signal
                 match Self::clean_plugin(&plugin, &state_clone, &service_clone, cancel_rx_clone).await {
                     Ok((status, message)) => {
                         tracing::info!("Plugin {} completed: {} - {}", plugin, status, message);
@@ -567,7 +593,7 @@ impl GuiController {
                     }
                 }
 
-                // Permit is automatically released when _permit is dropped
+                // Permit is automatically released when _permit is dropped, allowing next queued task to proceed
             });
 
             tasks.push(task);

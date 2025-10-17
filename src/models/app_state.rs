@@ -9,13 +9,34 @@ use std::time::Duration;
 /// instances will not crash, but will result in undefined behavior due to
 /// concurrent file access.
 ///
-/// This constraint is enforced in the CleaningService using a Semaphore.
+/// This constraint is enforced in the cleaning workflow (see [`crate::ui::GuiController`])
+/// using a `tokio::sync::Semaphore` to serialize execution.
+///
+/// # See Also
+///
+/// - [`crate::services::cleaning::CleaningService`] - The service that executes xEdit commands
+/// - [`crate::ui::GuiController`] - Orchestrates the cleaning workflow with semaphore enforcement
 pub const MAX_CONCURRENT_XEDIT_PROCESSES: usize = 1;
 
 /// Single source of truth for all application state.
 ///
 /// This struct mirrors the Python AppState dataclass and contains all
 /// configuration, runtime state, progress tracking, and results.
+///
+/// # Thread Safety
+///
+/// `AppState` is wrapped in `Arc<RwLock<AppState>>` by [`crate::state::StateManager`]
+/// to provide thread-safe access across the application. Never access `AppState`
+/// directly - always use [`StateManager`](crate::state::StateManager) methods:
+/// - [`read()`](crate::state::StateManager::read) for read-only access
+/// - [`update()`](crate::state::StateManager::update) for mutations with automatic change events
+///
+/// # Related Types
+///
+/// - [`crate::state::StateManager`]: Thread-safe wrapper with event emission
+/// - [`crate::state::StateChange`]: Event types for state mutations
+/// - [`crate::models::UserConfig`]: User configuration loaded from YAML
+/// - [`crate::models::MainConfig`]: Game and xEdit configurations
 #[derive(Clone, Debug)]
 pub struct AppState {
     // Configuration paths
