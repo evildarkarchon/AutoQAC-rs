@@ -294,9 +294,37 @@ impl StateManager {
     }
 
     /// Record the result of processing a plugin
-    pub fn add_plugin_result(&self, plugin: String, status: &str, message: String) -> Vec<StateChange> {
+    ///
+    /// # Arguments
+    /// * `plugin` - Name of the plugin that was processed
+    /// * `status` - Status of the operation ("cleaned", "failed", or "skipped")
+    /// * `message` - Human-readable message about the result
+    /// * `stats` - Optional cleaning statistics (ITMs, UDRs, etc.)
+    pub fn add_plugin_result(
+        &self,
+        plugin: String,
+        status: &str,
+        message: String,
+        stats: Option<crate::services::cleaning::CleaningStats>,
+    ) -> Vec<StateChange> {
         let mut changes = self.update(|state| {
             state.add_result(plugin.clone(), status);
+
+            // Update statistics if provided
+            if let Some(ref cleaning_stats) = stats {
+                // Update current statistics from CleaningStats
+                state.current_undeleted = cleaning_stats.undeleted;
+                state.current_removed = cleaning_stats.removed;
+                state.current_skipped = cleaning_stats.skipped;
+                state.current_partial_forms = cleaning_stats.partial_forms;
+                state.current_total_processed = cleaning_stats.undeleted
+                    + cleaning_stats.removed
+                    + cleaning_stats.skipped
+                    + cleaning_stats.partial_forms;
+
+                // Aggregate into totals
+                state.aggregate_current_stats();
+            }
         });
 
         // Emit a plugin processed event
@@ -527,6 +555,7 @@ mod tests {
             "plugin1.esp".to_string(),
             "cleaned",
             "Removed 5 ITMs".to_string(),
+            None,
         );
 
         // Should have progress update and plugin processed event
@@ -538,10 +567,79 @@ mod tests {
     }
 
     #[test]
+    fn test_add_plugin_result_with_stats() {
+        let manager = StateManager::new();
+        manager.start_cleaning(vec!["plugin1.esp".to_string(), "plugin2.esp".to_string()]);
+
+        // Create mock cleaning stats
+        let stats1 = crate::services::cleaning::CleaningStats {
+            undeleted: 3,
+            removed: 5,
+            skipped: 1,
+            partial_forms: 0,
+        };
+
+        let changes = manager.add_plugin_result(
+            "plugin1.esp".to_string(),
+            "cleaned",
+            "Removed 5 ITMs, undeleted 3 UDRs".to_string(),
+            Some(stats1),
+        );
+
+        assert!(changes.iter().any(|c| matches!(c, StateChange::PluginProcessed { .. })));
+
+        let state = manager.snapshot();
+        assert_eq!(state.cleaned_plugins.len(), 1);
+        assert_eq!(state.progress, 1);
+
+        // Check current statistics
+        assert_eq!(state.current_undeleted, 3);
+        assert_eq!(state.current_removed, 5);
+        assert_eq!(state.current_skipped, 1);
+        assert_eq!(state.current_total_processed, 9);
+
+        // Check aggregate statistics
+        assert_eq!(state.total_undeleted, 3);
+        assert_eq!(state.total_removed, 5);
+        assert_eq!(state.total_skipped, 1);
+        assert_eq!(state.total_records_processed, 9);
+
+        // Process second plugin
+        let stats2 = crate::services::cleaning::CleaningStats {
+            undeleted: 2,
+            removed: 7,
+            skipped: 0,
+            partial_forms: 1,
+        };
+
+        manager.add_plugin_result(
+            "plugin2.esp".to_string(),
+            "cleaned",
+            "Removed 7 ITMs, undeleted 2 UDRs, 1 partial form".to_string(),
+            Some(stats2),
+        );
+
+        let state = manager.snapshot();
+
+        // Current stats should be from the last plugin
+        assert_eq!(state.current_undeleted, 2);
+        assert_eq!(state.current_removed, 7);
+        assert_eq!(state.current_partial_forms, 1);
+        assert_eq!(state.current_total_processed, 10);
+
+        // Aggregate stats should be sum of both plugins
+        assert_eq!(state.total_undeleted, 5);
+        assert_eq!(state.total_removed, 12);
+        assert_eq!(state.total_skipped, 1);
+        assert_eq!(state.total_partial_forms, 1);
+        assert_eq!(state.total_records_processed, 19);
+    }
+
+    #[test]
     fn test_reset_cleaning_state() {
         let manager = StateManager::new();
         manager.start_cleaning(vec!["test.esp".to_string()]);
-        manager.add_plugin_result("test.esp".to_string(), "cleaned", "Done".to_string());
+        manager.add_plugin_result("test.esp".to_string(), "cleaned", "Done".to_string(), None);
 
         let changes = manager.reset_cleaning_state();
 

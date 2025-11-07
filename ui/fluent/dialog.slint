@@ -42,32 +42,28 @@ export component FluentDialog inherits Dialog {
     callback cancelled();
 
     // Dialog sizing
-    preferred-width: 400px;
-    max-width: 500px;
+    preferred-width: 450px;
 
-    // Modal backdrop
+    // Single child: Card-styled dialog content
     Rectangle {
-        background: #00000080;  // 50% black for dimmed backdrop
-        width: 100%;
-        height: 100%;
-    }
-
-    // Dialog content card
-    FluentCard {
-        title: root.dialog-title;
         width: root.preferred-width;
-
-        // Vertically center the dialog
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-
-        // Drop shadow for elevation
+        background: FluentPalette.surface;
+        border-radius: FluentPalette.corner-radius;
         drop-shadow-blur: FluentPalette.elevation-high;
         drop-shadow-color: #00000060;
         drop-shadow-offset-y: 8px;
 
         VerticalLayout {
+            padding: FluentPalette.spacing-lg;
             spacing: FluentPalette.spacing-lg;
+
+            // Title
+            Text {
+                text: root.dialog-title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+            }
 
             // Message text
             Text {
@@ -119,26 +115,26 @@ export component FluentProgressDialog inherits Dialog {
 
     preferred-width: 450px;
 
-    // Modal backdrop
+    // Single child: Card-styled dialog content
     Rectangle {
-        background: #00000080;
-        width: 100%;
-        height: 100%;
-    }
-
-    // Dialog content
-    FluentCard {
-        title: root.dialog-title;
         width: root.preferred-width;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-
+        background: FluentPalette.surface;
+        border-radius: FluentPalette.corner-radius;
         drop-shadow-blur: FluentPalette.elevation-high;
         drop-shadow-color: #00000060;
         drop-shadow-offset-y: 8px;
 
         VerticalLayout {
+            padding: FluentPalette.spacing-lg;
             spacing: FluentPalette.spacing-md;
+
+            // Title
+            Text {
+                text: root.dialog-title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+            }
 
             // Message
             Text {
@@ -210,25 +206,28 @@ export component FluentMessageDialog inherits Dialog {
 
     preferred-width: 400px;
 
+    // Single child: Card-styled dialog content
     Rectangle {
-        background: #00000080;
-        width: 100%;
-        height: 100%;
-    }
-
-    FluentCard {
-        title: root.dialog-title;
         width: root.preferred-width;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-
+        background: FluentPalette.surface;
+        border-radius: FluentPalette.corner-radius;
         drop-shadow-blur: FluentPalette.elevation-high;
         drop-shadow-color: #00000060;
         drop-shadow-offset-y: 8px;
 
         VerticalLayout {
+            padding: FluentPalette.spacing-lg;
             spacing: FluentPalette.spacing-lg;
 
+            // Title
+            Text {
+                text: root.dialog-title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+            }
+
+            // Message
             Text {
                 text: root.message;
                 color: FluentPalette.text-primary;
@@ -263,24 +262,26 @@ export component FluentErrorDialog inherits Dialog {
 
     preferred-width: 450px;
 
+    // Single child: Card-styled dialog content
     Rectangle {
-        background: #00000080;
-        width: 100%;
-        height: 100%;
-    }
-
-    FluentCard {
-        title: root.dialog-title;
         width: root.preferred-width;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-
+        background: FluentPalette.surface;
+        border-radius: FluentPalette.corner-radius;
         drop-shadow-blur: FluentPalette.elevation-high;
         drop-shadow-color: #00000060;
         drop-shadow-offset-y: 8px;
 
         VerticalLayout {
+            padding: FluentPalette.spacing-lg;
             spacing: FluentPalette.spacing-md;
+
+            // Title
+            Text {
+                text: root.dialog-title;
+                font-size: FluentTypography.subtitle;
+                font-weight: FluentTypography.weight-semibold;
+                color: FluentPalette.text-primary;
+            }
 
             // Error icon (simple circle with X)
             Rectangle {

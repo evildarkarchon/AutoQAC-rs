@@ -114,8 +114,17 @@ fn main() -> Result<()> {
     // The tokio runtime stays alive in the background to handle async tasks
     let result = gui_controller.run();
 
-    // Clean up
+    // Clean up after window closes
     tracing::info!("GUI closed, shutting down");
+
+    // Check if cleaning was in progress and cancel it
+    if state_manager.read(|s| s.is_cleaning) {
+        tracing::warn!("Window closed during cleaning operation - cancelling...");
+        state_manager.stop_cleaning();
+
+        // Give operations a moment to cancel gracefully
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
 
     // Shutdown the tokio runtime gracefully
     runtime.shutdown_timeout(std::time::Duration::from_secs(5));

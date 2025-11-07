@@ -66,6 +66,20 @@ pub struct AppState {
     pub failed_plugins: HashSet<String>,
     pub skipped_plugins: HashSet<String>,
 
+    // Per-plugin record statistics (reset for each plugin)
+    pub current_undeleted: usize,    // UDRs (Undeleted References)
+    pub current_removed: usize,      // ITMs (Identical To Master)
+    pub current_skipped: usize,      // Skipped records
+    pub current_partial_forms: usize,
+    pub current_total_processed: usize,
+
+    // Aggregate statistics across all plugins
+    pub total_undeleted: usize,
+    pub total_removed: usize,
+    pub total_skipped: usize,
+    pub total_partial_forms: usize,
+    pub total_records_processed: usize,
+
     // Settings
     pub journal_expiration: u32,
     pub cleaning_timeout: Duration,
@@ -104,6 +118,20 @@ impl Default for AppState {
             cleaned_plugins: HashSet::new(),
             failed_plugins: HashSet::new(),
             skipped_plugins: HashSet::new(),
+
+            // Per-plugin record statistics
+            current_undeleted: 0,
+            current_removed: 0,
+            current_skipped: 0,
+            current_partial_forms: 0,
+            current_total_processed: 0,
+
+            // Aggregate statistics
+            total_undeleted: 0,
+            total_removed: 0,
+            total_skipped: 0,
+            total_partial_forms: 0,
+            total_records_processed: 0,
 
             // Settings with defaults matching Python version
             journal_expiration: 7,
@@ -151,6 +179,120 @@ impl AppState {
         self.cleaned_plugins.clear();
         self.failed_plugins.clear();
         self.skipped_plugins.clear();
+
+        // Reset statistics
+        self.reset_current_stats();
+        self.total_undeleted = 0;
+        self.total_removed = 0;
+        self.total_skipped = 0;
+        self.total_partial_forms = 0;
+        self.total_records_processed = 0;
+    }
+
+    /// Reset per-plugin statistics before processing a new plugin.
+    pub fn reset_current_stats(&mut self) {
+        self.current_undeleted = 0;
+        self.current_removed = 0;
+        self.current_skipped = 0;
+        self.current_partial_forms = 0;
+        self.current_total_processed = 0;
+    }
+
+    /// Aggregate current plugin statistics into totals.
+    ///
+    /// Call this after completing processing of a plugin to add its
+    /// statistics to the running totals.
+    pub fn aggregate_current_stats(&mut self) {
+        self.total_undeleted += self.current_undeleted;
+        self.total_removed += self.current_removed;
+        self.total_skipped += self.current_skipped;
+        self.total_partial_forms += self.current_partial_forms;
+        self.total_records_processed += self.current_total_processed;
+    }
+
+    /// Increment a specific statistic counter.
+    ///
+    /// This is used during xEdit output parsing to track individual operations.
+    pub fn increment_stat(&mut self, stat_type: &str) {
+        match stat_type {
+            "undeleted" => {
+                self.current_undeleted += 1;
+                self.current_total_processed += 1;
+            }
+            "removed" => {
+                self.current_removed += 1;
+                self.current_total_processed += 1;
+            }
+            "skipped" => {
+                self.current_skipped += 1;
+                self.current_total_processed += 1;
+            }
+            "partial_forms" => {
+                self.current_partial_forms += 1;
+                self.current_total_processed += 1;
+            }
+            _ => {
+                // Unknown stat type - ignore
+            }
+        }
+    }
+
+    /// Get a formatted string summarizing current plugin statistics.
+    ///
+    /// Returns an empty string if no records were processed.
+    pub fn current_stats_summary(&self) -> String {
+        if self.current_total_processed == 0 {
+            return String::new();
+        }
+
+        let mut parts = Vec::new();
+
+        if self.current_undeleted > 0 {
+            parts.push(format!("{} undeleted", self.current_undeleted));
+        }
+        if self.current_removed > 0 {
+            parts.push(format!("{} removed", self.current_removed));
+        }
+        if self.current_skipped > 0 {
+            parts.push(format!("{} skipped", self.current_skipped));
+        }
+        if self.current_partial_forms > 0 {
+            parts.push(format!("{} partial forms", self.current_partial_forms));
+        }
+
+        if parts.is_empty() {
+            format!(" ({} items processed)", self.current_total_processed)
+        } else {
+            format!(" ({})", parts.join(", "))
+        }
+    }
+
+    /// Get a formatted string summarizing total statistics across all plugins.
+    pub fn total_stats_summary(&self) -> String {
+        if self.total_records_processed == 0 {
+            return String::new();
+        }
+
+        let mut parts = Vec::new();
+
+        if self.total_undeleted > 0 {
+            parts.push(format!("{} undeleted", self.total_undeleted));
+        }
+        if self.total_removed > 0 {
+            parts.push(format!("{} removed", self.total_removed));
+        }
+        if self.total_skipped > 0 {
+            parts.push(format!("{} skipped", self.total_skipped));
+        }
+        if self.total_partial_forms > 0 {
+            parts.push(format!("{} partial forms", self.total_partial_forms));
+        }
+
+        if parts.is_empty() {
+            format!("Total: {} items processed", self.total_records_processed)
+        } else {
+            format!("Total: {}", parts.join(", "))
+        }
     }
 
     /// Add a plugin processing result.
@@ -236,6 +378,10 @@ mod tests {
         state.total_plugins = 10;
         state.cleaned_plugins.insert("plugin1.esp".to_string());
 
+        // Add some statistics
+        state.current_removed = 10;
+        state.total_removed = 20;
+
         state.reset_cleaning_state();
 
         assert!(!state.is_cleaning);
@@ -243,5 +389,145 @@ mod tests {
         assert_eq!(state.progress, 0);
         assert_eq!(state.total_plugins, 0);
         assert!(state.cleaned_plugins.is_empty());
+
+        // Verify statistics are reset
+        assert_eq!(state.current_removed, 0);
+        assert_eq!(state.total_removed, 0);
+    }
+
+    #[test]
+    fn test_reset_current_stats() {
+        let mut state = AppState::default();
+        state.current_undeleted = 5;
+        state.current_removed = 10;
+        state.current_skipped = 2;
+        state.current_partial_forms = 1;
+        state.current_total_processed = 18;
+
+        state.reset_current_stats();
+
+        assert_eq!(state.current_undeleted, 0);
+        assert_eq!(state.current_removed, 0);
+        assert_eq!(state.current_skipped, 0);
+        assert_eq!(state.current_partial_forms, 0);
+        assert_eq!(state.current_total_processed, 0);
+    }
+
+    #[test]
+    fn test_aggregate_current_stats() {
+        let mut state = AppState::default();
+
+        // First plugin
+        state.current_undeleted = 5;
+        state.current_removed = 10;
+        state.current_skipped = 2;
+        state.current_partial_forms = 1;
+        state.current_total_processed = 18;
+        state.aggregate_current_stats();
+
+        assert_eq!(state.total_undeleted, 5);
+        assert_eq!(state.total_removed, 10);
+        assert_eq!(state.total_skipped, 2);
+        assert_eq!(state.total_partial_forms, 1);
+        assert_eq!(state.total_records_processed, 18);
+
+        // Second plugin
+        state.reset_current_stats();
+        state.current_undeleted = 3;
+        state.current_removed = 7;
+        state.current_total_processed = 10;
+        state.aggregate_current_stats();
+
+        assert_eq!(state.total_undeleted, 8);
+        assert_eq!(state.total_removed, 17);
+        assert_eq!(state.total_skipped, 2);
+        assert_eq!(state.total_partial_forms, 1);
+        assert_eq!(state.total_records_processed, 28);
+    }
+
+    #[test]
+    fn test_increment_stat() {
+        let mut state = AppState::default();
+
+        state.increment_stat("undeleted");
+        assert_eq!(state.current_undeleted, 1);
+        assert_eq!(state.current_total_processed, 1);
+
+        state.increment_stat("removed");
+        state.increment_stat("removed");
+        assert_eq!(state.current_removed, 2);
+        assert_eq!(state.current_total_processed, 3);
+
+        state.increment_stat("skipped");
+        assert_eq!(state.current_skipped, 1);
+        assert_eq!(state.current_total_processed, 4);
+
+        state.increment_stat("partial_forms");
+        assert_eq!(state.current_partial_forms, 1);
+        assert_eq!(state.current_total_processed, 5);
+
+        // Unknown stat type should be ignored
+        state.increment_stat("unknown");
+        assert_eq!(state.current_total_processed, 5);
+    }
+
+    #[test]
+    fn test_current_stats_summary() {
+        let mut state = AppState::default();
+
+        // No stats
+        assert_eq!(state.current_stats_summary(), "");
+
+        // Only removed
+        state.current_removed = 5;
+        state.current_total_processed = 5;
+        assert_eq!(state.current_stats_summary(), " (5 removed)");
+
+        // Multiple stats
+        state.current_undeleted = 3;
+        state.current_skipped = 1;
+        state.current_total_processed = 9;
+        assert_eq!(
+            state.current_stats_summary(),
+            " (3 undeleted, 5 removed, 1 skipped)"
+        );
+
+        // With partial forms
+        state.current_partial_forms = 2;
+        state.current_total_processed = 11;
+        assert_eq!(
+            state.current_stats_summary(),
+            " (3 undeleted, 5 removed, 1 skipped, 2 partial forms)"
+        );
+    }
+
+    #[test]
+    fn test_total_stats_summary() {
+        let mut state = AppState::default();
+
+        // No stats
+        assert_eq!(state.total_stats_summary(), "");
+
+        // Only removed
+        state.total_removed = 15;
+        state.total_records_processed = 15;
+        assert_eq!(state.total_stats_summary(), "Total: 15 removed");
+
+        // Multiple stats
+        state.total_undeleted = 8;
+        state.total_skipped = 3;
+        state.total_records_processed = 26;
+        assert_eq!(
+            state.total_stats_summary(),
+            "Total: 8 undeleted, 15 removed, 3 skipped"
+        );
+
+        // With partial forms
+        state.total_partial_forms = 4;
+        state.total_records_processed = 30;
+        assert_eq!(
+            state.total_stats_summary(),
+            "Total: 8 undeleted, 15 removed, 3 skipped, 4 partial forms"
+        );
     }
 }

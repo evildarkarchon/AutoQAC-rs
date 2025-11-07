@@ -13,7 +13,7 @@
 // - Cleaning orchestration
 
 use crate::models::MAX_CONCURRENT_XEDIT_PROCESSES;
-use crate::services::cleaning::CleaningService;
+use crate::services::cleaning::{CleaningService, CleaningStats};
 use crate::state::{StateChange, StateManager};
 use crate::ui::bridge::EventLoopBridge;
 use anyhow::{anyhow, Context, Result};
@@ -164,6 +164,20 @@ impl GuiController {
         ui.set_failed_count(state.failed_plugins.len() as i32);
         ui.set_skipped_count(state.skipped_plugins.len() as i32);
 
+        // Set current plugin statistics
+        ui.set_current_undeleted(state.current_undeleted as i32);
+        ui.set_current_removed(state.current_removed as i32);
+        ui.set_current_skipped(state.current_skipped as i32);
+        ui.set_current_partial_forms(state.current_partial_forms as i32);
+        ui.set_current_total_processed(state.current_total_processed as i32);
+
+        // Set aggregate statistics
+        ui.set_total_undeleted(state.total_undeleted as i32);
+        ui.set_total_removed(state.total_removed as i32);
+        ui.set_total_skipped(state.total_skipped as i32);
+        ui.set_total_partial_forms(state.total_partial_forms as i32);
+        ui.set_total_records_processed(state.total_records_processed as i32);
+
         tracing::debug!("UI synchronized with initial state");
     }
 
@@ -179,6 +193,7 @@ impl GuiController {
         let bridge_handle = bridge.clone_handle();
         let state_manager_clone = Arc::clone(state_manager);
         let cancel_rx_clone = cancel_rx.clone();
+        let ui_weak_for_start = ui.as_weak();
 
         // Start cleaning callback
         ui.on_start_cleaning(move || {
@@ -187,6 +202,28 @@ impl GuiController {
             // Validate configuration
             if !state_manager_clone.read(|s| s.is_fully_configured()) {
                 tracing::error!("Cannot start cleaning: configuration incomplete");
+
+                // Show error dialog
+                let missing = state_manager_clone.read(|s| {
+                    let mut items = Vec::new();
+                    if s.load_order_path.is_none() {
+                        items.push("Load Order file");
+                    }
+                    if s.xedit_exe_path.is_none() {
+                        items.push("xEdit executable");
+                    }
+                    if s.mo2_mode && s.mo2_exe_path.is_none() {
+                        items.push("Mod Organizer 2 executable");
+                    }
+                    items.join(", ")
+                });
+
+                Self::show_error_dialog(
+                    &ui_weak_for_start,
+                    "Configuration Incomplete",
+                    format!("Please configure the following before starting:\n\n{}", missing),
+                    "",
+                );
                 return;
             }
 
@@ -195,11 +232,20 @@ impl GuiController {
             let bridge_clone = bridge.clone();
             let state = Arc::clone(&state_manager_clone);
             let cancel = cancel_rx_clone.clone();
+            let ui_weak = ui_weak_for_start.clone();
 
             // Spawn async cleaning workflow with cancellation support
             bridge.spawn_async(move || async move {
                 if let Err(e) = Self::run_cleaning_workflow(state, bridge_clone, cancel).await {
                     tracing::error!("Cleaning workflow error: {}", e);
+
+                    // Show error dialog
+                    Self::show_error_dialog(
+                        &ui_weak,
+                        "Cleaning Failed",
+                        "An error occurred during the cleaning process.",
+                        format!("{:?}", e),
+                    );
                 }
             });
         });
@@ -274,14 +320,153 @@ impl GuiController {
         });
 
         let state = state_manager.clone();
+        let ui_weak = ui.as_weak();
 
-        // Partial forms toggled
+        // Partial forms toggled - show warning dialog if enabling
         ui.on_partial_forms_toggled(move || {
             let enabled = state.read(|s| s.partial_forms_enabled);
-            tracing::debug!("Partial forms toggled: {}", enabled);
+            tracing::debug!("Partial forms checkbox toggled: {}", enabled);
+
+            // If user is trying to enable it, show warning dialog first
+            if enabled {
+                tracing::info!("User attempting to enable partial forms - showing warning dialog");
+
+                // Revert the checkbox state (will be set to true only if user confirms)
+                state.update_settings(|s| {
+                    s.partial_forms_enabled = false;
+                });
+
+                // Show the warning dialog
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_partial_forms_enabled(false);  // Revert checkbox state
+                    ui.set_show_partial_forms_warning(true);  // Show dialog
+                }
+            } else {
+                // User is disabling it - allow without warning
+                tracing::info!("Partial forms disabled");
+                state.update_settings(|s| {
+                    s.partial_forms_enabled = false;
+                });
+            }
+        });
+
+        let state = state_manager.clone();
+        let ui_weak = ui.as_weak();
+
+        // User confirmed partial forms warning
+        ui.on_partial_forms_warning_confirmed(move || {
+            tracing::info!("User confirmed partial forms warning - enabling feature");
+
+            // Enable partial forms in state
             state.update_settings(|s| {
-                s.partial_forms_enabled = enabled;
+                s.partial_forms_enabled = true;
             });
+
+            // Update UI: hide dialog and enable checkbox
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_partial_forms_warning(false);
+                ui.set_partial_forms_enabled(true);
+            }
+        });
+
+        let state = state_manager.clone();
+        let ui_weak = ui.as_weak();
+
+        // User cancelled partial forms warning
+        ui.on_partial_forms_warning_cancelled(move || {
+            tracing::info!("User cancelled partial forms warning");
+
+            // Ensure partial forms stays disabled
+            state.update_settings(|s| {
+                s.partial_forms_enabled = false;
+            });
+
+            // Update UI: hide dialog and keep checkbox disabled
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_partial_forms_warning(false);
+                ui.set_partial_forms_enabled(false);
+            }
+        });
+
+        let ui_weak = ui.as_weak();
+
+        // Error dialog dismissed
+        ui.on_error_dialog_dismissed(move || {
+            tracing::debug!("Error dialog dismissed");
+
+            // Hide the error dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_error_dialog(false);
+            }
+        });
+
+        let state = state_manager.clone();
+        let ui_weak = ui.as_weak();
+
+        // Close confirmation - user wants to proceed with exit
+        ui.on_close_confirmation_proceed(move || {
+            tracing::info!("User confirmed exit during cleaning - cancelling operations");
+
+            // Stop cleaning operations
+            state.stop_cleaning();
+
+            // Hide the confirmation dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_close_confirmation(false);
+
+                // Close the window
+                ui.window().hide().ok();
+            }
+        });
+
+        let ui_weak = ui.as_weak();
+
+        // Close confirmation - user cancelled, wants to continue cleaning
+        ui.on_close_confirmation_cancelled(move || {
+            tracing::info!("User cancelled exit - continuing cleaning");
+
+            // Just hide the dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_close_confirmation(false);
+            }
+        });
+
+        let ui_weak = ui.as_weak();
+
+        // Message dialog dismissed
+        ui.on_message_dialog_dismissed(move || {
+            tracing::debug!("Message dialog dismissed");
+
+            // Hide the message dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_message_dialog(false);
+            }
+        });
+
+        // Window close event handler
+        let state = state_manager.clone();
+        let ui_weak = ui.as_weak();
+
+        ui.window().on_close_requested(move || {
+            // Check if cleaning is in progress
+            let is_cleaning = state.read(|s| s.is_cleaning);
+
+            if is_cleaning {
+                tracing::info!("Close requested during cleaning - showing confirmation dialog");
+
+                // Show confirmation dialog
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_show_close_confirmation(true);
+                }
+
+                // Prevent window from closing - user must confirm
+                slint::CloseRequestResponse::KeepWindowShown
+            } else {
+                tracing::info!("Close requested - allowing window to close");
+
+                // Allow window to close
+                slint::CloseRequestResponse::HideWindow
+            }
         });
 
         tracing::debug!("UI callbacks configured");
@@ -391,7 +576,24 @@ impl GuiController {
                         message,
                     } => {
                         tracing::debug!("Plugin processed: {} - {} ({})", plugin, status, message);
-                        // Update results counters (already handled by CleaningFinished)
+
+                        // Update current and aggregate statistics in UI
+                        let state_snapshot = state_manager_clone.snapshot();
+                        bridge_handle.update_ui(move |ui| {
+                            // Current plugin statistics
+                            ui.set_current_undeleted(state_snapshot.current_undeleted as i32);
+                            ui.set_current_removed(state_snapshot.current_removed as i32);
+                            ui.set_current_skipped(state_snapshot.current_skipped as i32);
+                            ui.set_current_partial_forms(state_snapshot.current_partial_forms as i32);
+                            ui.set_current_total_processed(state_snapshot.current_total_processed as i32);
+
+                            // Aggregate statistics (for results summary)
+                            ui.set_total_undeleted(state_snapshot.total_undeleted as i32);
+                            ui.set_total_removed(state_snapshot.total_removed as i32);
+                            ui.set_total_skipped(state_snapshot.total_skipped as i32);
+                            ui.set_total_partial_forms(state_snapshot.total_partial_forms as i32);
+                            ui.set_total_records_processed(state_snapshot.total_records_processed as i32);
+                        });
                     }
 
                     StateChange::OperationChanged { operation } => {
@@ -416,6 +618,20 @@ impl GuiController {
                             ui.set_cleaned_count(0);
                             ui.set_failed_count(0);
                             ui.set_skipped_count(0);
+
+                            // Reset current plugin statistics
+                            ui.set_current_undeleted(0);
+                            ui.set_current_removed(0);
+                            ui.set_current_skipped(0);
+                            ui.set_current_partial_forms(0);
+                            ui.set_current_total_processed(0);
+
+                            // Reset aggregate statistics
+                            ui.set_total_undeleted(0);
+                            ui.set_total_removed(0);
+                            ui.set_total_skipped(0);
+                            ui.set_total_partial_forms(0);
+                            ui.set_total_records_processed(0);
                         });
                     }
                 }
@@ -423,6 +639,49 @@ impl GuiController {
 
             tracing::debug!("State subscription thread terminated");
         });
+    }
+
+    /// Show an error dialog
+    ///
+    /// Displays an error dialog to the user with the given title, message, and optional details.
+    ///
+    /// # Arguments
+    /// * `ui_weak` - Weak reference to the UI
+    /// * `title` - Error dialog title
+    /// * `message` - Main error message
+    /// * `details` - Optional technical details (empty string if none)
+    fn show_error_dialog(
+        ui_weak: &slint::Weak<MainWindow>,
+        title: impl Into<slint::SharedString>,
+        message: impl Into<slint::SharedString>,
+        details: impl Into<slint::SharedString>,
+    ) {
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_error_title(title.into());
+            ui.set_error_message(message.into());
+            ui.set_error_details(details.into());
+            ui.set_show_error_dialog(true);
+        }
+    }
+
+    /// Show an informational message dialog
+    ///
+    /// Displays an informational message dialog to the user.
+    ///
+    /// # Arguments
+    /// * `ui_weak` - Weak reference to the UI
+    /// * `title` - Dialog title
+    /// * `message` - Message text
+    fn show_message_dialog(
+        ui_weak: &slint::Weak<MainWindow>,
+        title: impl Into<slint::SharedString>,
+        message: impl Into<slint::SharedString>,
+    ) {
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_message_title(title.into());
+            ui.set_message_text(message.into());
+            ui.set_show_message_dialog(true);
+        }
     }
 
     /// Show a native file picker dialog
@@ -574,9 +833,9 @@ impl GuiController {
                 // CANCELLATION POINT 2: Inside clean_plugin() via tokio::select!
                 // Races xEdit subprocess execution against cancellation signal
                 match Self::clean_plugin(&plugin, &state_clone, &service_clone, cancel_rx_clone).await {
-                    Ok((status, message)) => {
+                    Ok((status, message, stats)) => {
                         tracing::info!("Plugin {} completed: {} - {}", plugin, status, message);
-                        state_clone.add_plugin_result(plugin.clone(), &status, message.clone());
+                        state_clone.add_plugin_result(plugin.clone(), &status, message.clone(), stats);
 
                         // Update UI
                         bridge_clone.update_ui(move |ui| {
@@ -589,6 +848,7 @@ impl GuiController {
                             plugin.clone(),
                             "failed",
                             format!("Error: {}", e),
+                            None,
                         );
                     }
                 }
@@ -669,13 +929,13 @@ impl GuiController {
     /// Uses `tokio::select!` to race the cleaning operation against cancellation,
     /// providing immediate responsiveness to user cancellation requests.
     ///
-    /// Returns (status, message) tuple
+    /// Returns (status, message, stats) tuple
     async fn clean_plugin(
         plugin: &str,
         state: &StateManager,
         service: &CleaningService,
         mut cancel_rx: watch::Receiver<bool>,
-    ) -> Result<(String, String)> {
+    ) -> Result<(String, String, Option<CleaningStats>)> {
         // Get configuration from state
         let (xedit_exe, game_type, mo2_exe, partial_forms, timeout, _mo2_install, _xedit_install) = state.read(|s| {
             (
@@ -725,6 +985,7 @@ impl GuiController {
             return Ok((
                 "skipped".to_string(),
                 "Missing requirements or empty plugin".to_string(),
+                None,
             ));
         }
 
@@ -733,6 +994,7 @@ impl GuiController {
             return Ok((
                 "failed".to_string(),
                 format!("xEdit exited with code {}", exit_code),
+                None,
             ));
         }
 
@@ -740,9 +1002,17 @@ impl GuiController {
         let stats = service.parse_log_file(&main_log)?;
 
         if stats.has_changes() {
-            Ok(("cleaned".to_string(), stats.summary()))
+            Ok((
+                "cleaned".to_string(),
+                stats.summary(),
+                Some(stats),
+            ))
         } else {
-            Ok(("skipped".to_string(), "Nothing to clean".to_string()))
+            Ok((
+                "skipped".to_string(),
+                "Nothing to clean".to_string(),
+                Some(stats),
+            ))
         }
     }
 }

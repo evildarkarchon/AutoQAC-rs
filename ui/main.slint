@@ -9,6 +9,7 @@ import { FluentButton } from "fluent/button.slint";
 import { FluentCard } from "fluent/card.slint";
 import { FluentLineEdit } from "fluent/input.slint";
 import { FluentCheckBox } from "fluent/checkbox.slint";
+import { FluentDialog, FluentErrorDialog, FluentMessageDialog } from "fluent/dialog.slint";
 
 export component MainWindow inherits Window {
     title: "AutoQAC - Automatic Quick Auto Clean";
@@ -43,6 +44,35 @@ export component MainWindow inherits Window {
     in-out property <int> failed-count: 0;
     in-out property <int> skipped-count: 0;
 
+    // Current plugin statistics (for progress display)
+    in-out property <int> current-undeleted: 0;
+    in-out property <int> current-removed: 0;
+    in-out property <int> current-skipped: 0;
+    in-out property <int> current-partial-forms: 0;
+    in-out property <int> current-total-processed: 0;
+
+    // Aggregate statistics across all plugins (for results summary)
+    in-out property <int> total-undeleted: 0;
+    in-out property <int> total-removed: 0;
+    in-out property <int> total-skipped: 0;
+    in-out property <int> total-partial-forms: 0;
+    in-out property <int> total-records-processed: 0;
+
+    // Dialog visibility
+    in-out property <bool> show-partial-forms-warning: false;
+    in-out property <bool> show-error-dialog: false;
+    in-out property <bool> show-close-confirmation: false;
+    in-out property <bool> show-message-dialog: false;
+
+    // Error dialog content
+    in-out property <string> error-title: "Error";
+    in-out property <string> error-message: "";
+    in-out property <string> error-details: "";
+
+    // Message dialog content
+    in-out property <string> message-title: "Information";
+    in-out property <string> message-text: "";
+
     // ========================================================================
     // Callbacks - Handled by Rust GUI Controller
     // ========================================================================
@@ -54,6 +84,12 @@ export component MainWindow inherits Window {
     callback browse-mo2();
     callback mo2-mode-toggled();
     callback partial-forms-toggled();
+    callback partial-forms-warning-confirmed();
+    callback partial-forms-warning-cancelled();
+    callback error-dialog-dismissed();
+    callback close-confirmation-proceed();
+    callback close-confirmation-cancelled();
+    callback message-dialog-dismissed();
 
     // ========================================================================
     // Main UI Layout
@@ -291,6 +327,97 @@ export component MainWindow inherits Window {
                     color: FluentPalette.text-tertiary;
                     font-size: FluentTypography.caption;
                 }
+
+                // Current plugin statistics (shown if any records processed)
+                if current-total-processed > 0: VerticalLayout {
+                    spacing: FluentPalette.spacing-sm;
+
+                    // Divider
+                    Rectangle {
+                        height: 1px;
+                        background: FluentPalette.card-stroke;
+                    }
+
+                    // Statistics header
+                    Text {
+                        text: "Current Plugin Statistics:";
+                        color: FluentPalette.text-secondary;
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                    }
+
+                    // Statistics list
+                    VerticalLayout {
+                        spacing: 2px;
+
+                        // UDRs (Undeleted References)
+                        if current-undeleted > 0: HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "•";
+                                color: FluentPalette.info;
+                                font-size: FluentTypography.caption;
+                            }
+                            Text {
+                                text: current-undeleted + " UDRs undeleted";
+                                color: FluentPalette.text-secondary;
+                                font-size: FluentTypography.caption;
+                            }
+                        }
+
+                        // ITMs (Identical To Master)
+                        if current-removed > 0: HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "•";
+                                color: FluentPalette.success;
+                                font-size: FluentTypography.caption;
+                            }
+                            Text {
+                                text: current-removed + " ITMs removed";
+                                color: FluentPalette.text-secondary;
+                                font-size: FluentTypography.caption;
+                            }
+                        }
+
+                        // Deleted Navmeshes
+                        if current-skipped > 0: HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "•";
+                                color: FluentPalette.warning;
+                                font-size: FluentTypography.caption;
+                            }
+                            Text {
+                                text: current-skipped + " deleted navmeshes";
+                                color: FluentPalette.text-secondary;
+                                font-size: FluentTypography.caption;
+                            }
+                        }
+
+                        // Partial Forms (experimental)
+                        if current-partial-forms > 0: HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "•";
+                                color: FluentPalette.accent;
+                                font-size: FluentTypography.caption;
+                            }
+                            Text {
+                                text: current-partial-forms + " partial forms";
+                                color: FluentPalette.text-secondary;
+                                font-size: FluentTypography.caption;
+                            }
+                        }
+                    }
+
+                    // Total processed count
+                    Text {
+                        text: "Total: " + current-total-processed + " records processed";
+                        color: FluentPalette.text-tertiary;
+                        font-size: FluentTypography.caption;
+                    }
+                }
             }
         }
 
@@ -358,6 +485,97 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+
+            // Aggregate statistics (shown if any records were processed)
+            if total-records-processed > 0: VerticalLayout {
+                spacing: FluentPalette.spacing-sm;
+
+                // Divider
+                Rectangle {
+                    height: 1px;
+                    background: FluentPalette.card-stroke;
+                }
+
+                // Statistics header
+                Text {
+                    text: "Total Records Processed:";
+                    color: FluentPalette.text-secondary;
+                    font-size: FluentTypography.caption;
+                    font-weight: FluentTypography.weight-semibold;
+                }
+
+                // Statistics list
+                VerticalLayout {
+                    spacing: 2px;
+
+                    // UDRs (Undeleted References)
+                    if total-undeleted > 0: HorizontalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "•";
+                            color: FluentPalette.info;
+                            font-size: FluentTypography.caption;
+                        }
+                        Text {
+                            text: total-undeleted + " UDRs undeleted";
+                            color: FluentPalette.text-secondary;
+                            font-size: FluentTypography.caption;
+                        }
+                    }
+
+                    // ITMs (Identical To Master)
+                    if total-removed > 0: HorizontalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "•";
+                            color: FluentPalette.success;
+                            font-size: FluentTypography.caption;
+                        }
+                        Text {
+                            text: total-removed + " ITMs removed";
+                            color: FluentPalette.text-secondary;
+                            font-size: FluentTypography.caption;
+                        }
+                    }
+
+                    // Deleted Navmeshes
+                    if total-skipped > 0: HorizontalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "•";
+                            color: FluentPalette.warning;
+                            font-size: FluentTypography.caption;
+                        }
+                        Text {
+                            text: total-skipped + " deleted navmeshes";
+                            color: FluentPalette.text-secondary;
+                            font-size: FluentTypography.caption;
+                        }
+                    }
+
+                    // Partial Forms (experimental)
+                    if total-partial-forms > 0: HorizontalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "•";
+                            color: FluentPalette.accent;
+                            font-size: FluentTypography.caption;
+                        }
+                        Text {
+                            text: total-partial-forms + " partial forms";
+                            color: FluentPalette.text-secondary;
+                            font-size: FluentTypography.caption;
+                        }
+                    }
+                }
+
+                // Total summary
+                Text {
+                    text: "Total: " + total-records-processed + " records processed";
+                    color: FluentPalette.text-tertiary;
+                    font-size: FluentTypography.caption;
+                }
+            }
         }
 
         // Spacer to push buttons to bottom
@@ -391,6 +609,83 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // ====================================================================
+    // Partial Forms Warning Dialog
+    // ====================================================================
+
+    if show-partial-forms-warning: FluentDialog {
+        dialog-title: "Partial Forms Warning";
+        message: "⚠️  WARNING: Partial Forms Cleaning\n\n" +
+                 "Enabling partial forms cleaning will clean plugins that contain " +
+                 "partial forms (records that are split across multiple plugins).\n\n" +
+                 "This can be dangerous and may break your game if not done carefully.\n\n" +
+                 "Only enable this if you understand the risks and have a backup " +
+                 "of your plugins.\n\n" +
+                 "Do you want to enable partial forms cleaning?";
+        show-cancel: true;
+        confirm-text: "Enable Partial Forms";
+        cancel-text: "Cancel";
+
+        confirmed => {
+            partial-forms-warning-confirmed();
+        }
+
+        cancelled => {
+            partial-forms-warning-cancelled();
+        }
+    }
+
+    // ====================================================================
+    // Error Dialog
+    // ====================================================================
+
+    if show-error-dialog: FluentErrorDialog {
+        dialog-title: error-title;
+        message: error-message;
+        error-details: error-details;
+
+        confirmed => {
+            error-dialog-dismissed();
+        }
+    }
+
+    // ====================================================================
+    // Close Confirmation Dialog
+    // ====================================================================
+    // Shown when user tries to close window during cleaning operation.
+    // Uses Slint's window().on_close_requested() API to intercept close.
+
+    if show-close-confirmation: FluentDialog {
+        dialog-title: "Confirm Exit";
+        message: "Cleaning is currently in progress.\n\n" +
+                 "If you exit now, the current operation will be cancelled.\n\n" +
+                 "Are you sure you want to exit?";
+        show-cancel: true;
+        confirm-text: "Exit";
+        cancel-text: "Continue Cleaning";
+
+        confirmed => {
+            close-confirmation-proceed();
+        }
+
+        cancelled => {
+            close-confirmation-cancelled();
+        }
+    }
+
+    // ====================================================================
+    // Information/Message Dialog
+    // ====================================================================
+
+    if show-message-dialog: FluentMessageDialog {
+        dialog-title: message-title;
+        message: message-text;
+
+        confirmed => {
+            message-dialog-dismissed();
         }
     }
 }
