@@ -58,11 +58,23 @@ export component MainWindow inherits Window {
     in-out property <int> total-partial-forms: 0;
     in-out property <int> total-records-processed: 0;
 
+    // Path validation state
+    in-out property <bool> load-order-path-valid: false;
+    in-out property <bool> xedit-exe-path-valid: false;
+    in-out property <bool> mo2-exe-path-valid: false;
+    in-out property <string> detected-game-type: "";
+
+    // Configuration status
+    in-out property <string> status-message: "Ready";
+    in-out property <bool> is-fully-configured: false;
+    in-out property <int> total-plugins-in-load-order: 0;
+
     // Dialog visibility
     in-out property <bool> show-partial-forms-warning: false;
     in-out property <bool> show-error-dialog: false;
     in-out property <bool> show-close-confirmation: false;
     in-out property <bool> show-message-dialog: false;
+    in-out property <bool> show-about-dialog: false;
 
     // Error dialog content
     in-out property <string> error-title: "Error";
@@ -79,6 +91,7 @@ export component MainWindow inherits Window {
 
     callback start-cleaning();
     callback stop-cleaning();
+    callback refresh-configuration();
     callback browse-load-order();
     callback browse-xedit();
     callback browse-mo2();
@@ -90,6 +103,8 @@ export component MainWindow inherits Window {
     callback close-confirmation-proceed();
     callback close-confirmation-cancelled();
     callback message-dialog-dismissed();
+    callback show-about();
+    callback about-dialog-dismissed();
 
     // ========================================================================
     // Main UI Layout
@@ -128,21 +143,40 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Version/status badge (optional)
-            Rectangle {
-                width: 60px;
-                height: 24px;
-                border-radius: 12px;
-                background: FluentPalette.surface;
-                border-width: FluentLayout.border-thin;
-                border-color: FluentPalette.card-stroke;
+            // About button
+            FluentButton {
+                text: "About";
+                max-width: 80px;
+                clicked => { show-about(); }
+            }
 
-                Text {
-                    text: "v3.0";
-                    font-size: FluentTypography.caption;
-                    color: FluentPalette.text-secondary;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+            // Configuration status badge
+            Rectangle {
+                min-width: 120px;
+                height: 28px;
+                border-radius: 14px;
+                background: is-fully-configured ? #1A4D2E : #4A3800;
+                border-width: 1px;
+                border-color: is-fully-configured ? FluentPalette.success : FluentPalette.warning;
+
+                HorizontalLayout {
+                    padding: 4px;
+                    spacing: 6px;
+
+                    Text {
+                        text: is-fully-configured ? "✓" : "⚠";
+                        font-size: 14px;
+                        color: is-fully-configured ? FluentPalette.success : FluentPalette.warning;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: is-fully-configured ? "Ready" : "Setup Required";
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                        color: is-fully-configured ? FluentPalette.success : FluentPalette.warning;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -176,6 +210,20 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                     }
 
+                    // Validation indicator
+                    if load-order-path != "": Rectangle {
+                        width: 20px;
+                        height: 20px;
+
+                        Text {
+                            text: load-order-path-valid ? "✓" : "✗";
+                            color: load-order-path-valid ? FluentPalette.success : FluentPalette.error;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
                     FluentButton {
                         text: "Browse";
                         enabled: !is-cleaning;
@@ -201,6 +249,28 @@ export component MainWindow inherits Window {
                         placeholder: "Path to SSEEdit.exe / FO4Edit.exe";
                         enabled: !is-cleaning;
                         horizontal-stretch: 1;
+                    }
+
+                    // Validation indicator
+                    if xedit-exe-path != "": Rectangle {
+                        width: 20px;
+                        height: 20px;
+
+                        Text {
+                            text: xedit-exe-path-valid ? "✓" : "✗";
+                            color: xedit-exe-path-valid ? FluentPalette.success : FluentPalette.error;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Game type indicator
+                    if detected-game-type != "": Text {
+                        text: "(" + detected-game-type + ")";
+                        color: FluentPalette.text-tertiary;
+                        font-size: FluentTypography.caption;
+                        vertical-alignment: center;
                     }
 
                     FluentButton {
@@ -230,11 +300,37 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                     }
 
+                    // Validation indicator
+                    if mo2-exe-path != "": Rectangle {
+                        width: 20px;
+                        height: 20px;
+
+                        Text {
+                            text: mo2-exe-path-valid ? "✓" : "✗";
+                            color: mo2-exe-path-valid ? FluentPalette.success : FluentPalette.error;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
                     FluentButton {
                         text: "Browse";
                         enabled: !is-cleaning;
                         max-width: 100px;
                         clicked => { browse-mo2(); }
+                    }
+                }
+
+                // Refresh Configuration button
+                HorizontalLayout {
+                    alignment: end;
+
+                    FluentButton {
+                        text: "Refresh Configuration";
+                        enabled: !is-cleaning;
+                        max-width: 180px;
+                        clicked => { refresh-configuration(); }
                     }
                 }
             }
@@ -276,7 +372,7 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 spacing: FluentPalette.spacing-md;
 
-                // Progress status text
+                // Progress status text with percentage
                 HorizontalLayout {
                     spacing: FluentPalette.spacing-sm;
 
@@ -292,25 +388,58 @@ export component MainWindow inherits Window {
                         font-size: FluentTypography.body;
                         font-weight: FluentTypography.weight-semibold;
                     }
+
+                    // Percentage indicator
+                    if progress-total > 0: Text {
+                        text: "(" + Math.round(progress-current * 100.0 / progress-total) + "%)";
+                        color: FluentPalette.accent;
+                        font-size: FluentTypography.body;
+                        font-weight: FluentTypography.weight-semibold;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    // Processing indicator
+                    Text {
+                        text: "⚙";
+                        color: FluentPalette.accent;
+                        font-size: 16px;
+                    }
                 }
 
-                // Progress bar
+                // Enhanced progress bar with percentage overlay
                 Rectangle {
-                    height: 6px;
+                    height: 24px;
                     background: FluentPalette.surface-secondary;
-                    border-radius: 3px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: FluentPalette.card-stroke;
 
                     // Progress fill
                     Rectangle {
-                        height: parent.height;
-                        width: progress-total > 0 ? (parent.width * progress-current / progress-total) : 0px;
+                        height: parent.height - 2px;
+                        width: progress-total > 0 ? ((parent.width - 2px) * progress-current / progress-total) : 0px;
+                        x: 1px;
+                        y: 1px;
                         background: FluentPalette.accent;
-                        border-radius: parent.border-radius;
+                        border-radius: parent.border-radius - 1px;
 
                         animate width {
-                            duration: 200ms;
+                            duration: 300ms;
                             easing: ease-out;
                         }
+                    }
+
+                    // Percentage text overlay
+                    if progress-total > 0: Text {
+                        text: Math.round(progress-current * 100.0 / progress-total) + "%";
+                        color: progress-current > progress-total / 2 ? #FFFFFF : FluentPalette.text-primary;
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
 
@@ -330,7 +459,7 @@ export component MainWindow inherits Window {
 
                 // Current plugin statistics (shown if any records processed)
                 if current-total-processed > 0: VerticalLayout {
-                    spacing: FluentPalette.spacing-sm;
+                    spacing: FluentPalette.spacing-md;
 
                     // Divider
                     Rectangle {
@@ -346,76 +475,159 @@ export component MainWindow inherits Window {
                         font-weight: FluentTypography.weight-semibold;
                     }
 
-                    // Statistics list
-                    VerticalLayout {
-                        spacing: 2px;
+                    // Statistics badges in horizontal layout
+                    HorizontalLayout {
+                        spacing: FluentPalette.spacing-sm;
+                        alignment: start;
 
-                        // UDRs (Undeleted References)
-                        if current-undeleted > 0: HorizontalLayout {
-                            spacing: 4px;
-                            Text {
-                                text: "•";
-                                color: FluentPalette.info;
-                                font-size: FluentTypography.caption;
-                            }
-                            Text {
-                                text: current-undeleted + " UDRs undeleted";
-                                color: FluentPalette.text-secondary;
-                                font-size: FluentTypography.caption;
+                        // UDRs badge (Undeleted References)
+                        if current-undeleted > 0: Rectangle {
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #E3F2FD;
+                            border-width: 1px;
+                            border-color: FluentPalette.info;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 6px;
+
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: FluentPalette.info;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                Text {
+                                    text: current-undeleted + " UDRs";
+                                    color: #1976D2;
+                                    font-size: FluentTypography.caption;
+                                    font-weight: FluentTypography.weight-semibold;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
 
-                        // ITMs (Identical To Master)
-                        if current-removed > 0: HorizontalLayout {
-                            spacing: 4px;
-                            Text {
-                                text: "•";
-                                color: FluentPalette.success;
-                                font-size: FluentTypography.caption;
-                            }
-                            Text {
-                                text: current-removed + " ITMs removed";
-                                color: FluentPalette.text-secondary;
-                                font-size: FluentTypography.caption;
+                        // ITMs badge (Identical To Master)
+                        if current-removed > 0: Rectangle {
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #E8F5E9;
+                            border-width: 1px;
+                            border-color: FluentPalette.success;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 6px;
+
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: FluentPalette.success;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                Text {
+                                    text: current-removed + " ITMs";
+                                    color: #388E3C;
+                                    font-size: FluentTypography.caption;
+                                    font-weight: FluentTypography.weight-semibold;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
 
-                        // Deleted Navmeshes
-                        if current-skipped > 0: HorizontalLayout {
-                            spacing: 4px;
-                            Text {
-                                text: "•";
-                                color: FluentPalette.warning;
-                                font-size: FluentTypography.caption;
-                            }
-                            Text {
-                                text: current-skipped + " deleted navmeshes";
-                                color: FluentPalette.text-secondary;
-                                font-size: FluentTypography.caption;
+                        // Deleted Navmeshes badge
+                        if current-skipped > 0: Rectangle {
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #FFF8E1;
+                            border-width: 1px;
+                            border-color: FluentPalette.warning;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 6px;
+
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: FluentPalette.warning;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                Text {
+                                    text: current-skipped + " Navmeshes";
+                                    color: #F57C00;
+                                    font-size: FluentTypography.caption;
+                                    font-weight: FluentTypography.weight-semibold;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
 
-                        // Partial Forms (experimental)
-                        if current-partial-forms > 0: HorizontalLayout {
-                            spacing: 4px;
-                            Text {
-                                text: "•";
-                                color: FluentPalette.accent;
-                                font-size: FluentTypography.caption;
-                            }
-                            Text {
-                                text: current-partial-forms + " partial forms";
-                                color: FluentPalette.text-secondary;
-                                font-size: FluentTypography.caption;
+                        // Partial Forms badge (experimental)
+                        if current-partial-forms > 0: Rectangle {
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #F3E5F5;
+                            border-width: 1px;
+                            border-color: FluentPalette.accent;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 6px;
+
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: FluentPalette.accent;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                Text {
+                                    text: current-partial-forms + " Partial";
+                                    color: #7B1FA2;
+                                    font-size: FluentTypography.caption;
+                                    font-weight: FluentTypography.weight-semibold;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
                     }
 
-                    // Total processed count
-                    Text {
-                        text: "Total: " + current-total-processed + " records processed";
-                        color: FluentPalette.text-tertiary;
-                        font-size: FluentTypography.caption;
+                    // Total processed count with visual badge
+                    Rectangle {
+                        height: 32px;
+                        border-radius: 4px;
+                        background: FluentPalette.surface-secondary;
+                        border-width: 1px;
+                        border-color: FluentPalette.card-stroke;
+
+                        HorizontalLayout {
+                            padding: 8px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Total Records:";
+                                color: FluentPalette.text-secondary;
+                                font-size: FluentTypography.caption;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: current-total-processed;
+                                color: FluentPalette.text-primary;
+                                font-size: FluentTypography.caption;
+                                font-weight: FluentTypography.weight-bold;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
@@ -488,7 +700,7 @@ export component MainWindow inherits Window {
 
             // Aggregate statistics (shown if any records were processed)
             if total-records-processed > 0: VerticalLayout {
-                spacing: FluentPalette.spacing-sm;
+                spacing: FluentPalette.spacing-md;
 
                 // Divider
                 Rectangle {
@@ -504,67 +716,167 @@ export component MainWindow inherits Window {
                     font-weight: FluentTypography.weight-semibold;
                 }
 
-                // Statistics list
+                // Statistics badges grid
                 VerticalLayout {
-                    spacing: 2px;
+                    spacing: FluentPalette.spacing-sm;
 
-                    // UDRs (Undeleted References)
-                    if total-undeleted > 0: HorizontalLayout {
-                        spacing: 4px;
-                        Text {
-                            text: "•";
-                            color: FluentPalette.info;
-                            font-size: FluentTypography.caption;
+                    // First row: UDRs and ITMs
+                    HorizontalLayout {
+                        spacing: FluentPalette.spacing-sm;
+                        alignment: start;
+
+                        // UDRs badge
+                        if total-undeleted > 0: Rectangle {
+                            height: 36px;
+                            min-width: 140px;
+                            border-radius: 6px;
+                            background: #E3F2FD;
+                            border-width: 1px;
+                            border-color: FluentPalette.info;
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: FluentPalette.info;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                VerticalLayout {
+                                    Text {
+                                        text: total-undeleted;
+                                        color: #1976D2;
+                                        font-size: FluentTypography.body;
+                                        font-weight: FluentTypography.weight-bold;
+                                    }
+                                    Text {
+                                        text: "UDRs Undeleted";
+                                        color: #1976D2;
+                                        font-size: 10px;
+                                    }
+                                }
+                            }
                         }
-                        Text {
-                            text: total-undeleted + " UDRs undeleted";
-                            color: FluentPalette.text-secondary;
-                            font-size: FluentTypography.caption;
+
+                        // ITMs badge
+                        if total-removed > 0: Rectangle {
+                            height: 36px;
+                            min-width: 140px;
+                            border-radius: 6px;
+                            background: #E8F5E9;
+                            border-width: 1px;
+                            border-color: FluentPalette.success;
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: FluentPalette.success;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                VerticalLayout {
+                                    Text {
+                                        text: total-removed;
+                                        color: #388E3C;
+                                        font-size: FluentTypography.body;
+                                        font-weight: FluentTypography.weight-bold;
+                                    }
+                                    Text {
+                                        text: "ITMs Removed";
+                                        color: #388E3C;
+                                        font-size: 10px;
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    // ITMs (Identical To Master)
-                    if total-removed > 0: HorizontalLayout {
-                        spacing: 4px;
-                        Text {
-                            text: "•";
-                            color: FluentPalette.success;
-                            font-size: FluentTypography.caption;
-                        }
-                        Text {
-                            text: total-removed + " ITMs removed";
-                            color: FluentPalette.text-secondary;
-                            font-size: FluentTypography.caption;
-                        }
-                    }
+                    // Second row: Navmeshes and Partial Forms
+                    HorizontalLayout {
+                        spacing: FluentPalette.spacing-sm;
+                        alignment: start;
 
-                    // Deleted Navmeshes
-                    if total-skipped > 0: HorizontalLayout {
-                        spacing: 4px;
-                        Text {
-                            text: "•";
-                            color: FluentPalette.warning;
-                            font-size: FluentTypography.caption;
-                        }
-                        Text {
-                            text: total-skipped + " deleted navmeshes";
-                            color: FluentPalette.text-secondary;
-                            font-size: FluentTypography.caption;
-                        }
-                    }
+                        // Navmeshes badge
+                        if total-skipped > 0: Rectangle {
+                            height: 36px;
+                            min-width: 140px;
+                            border-radius: 6px;
+                            background: #FFF8E1;
+                            border-width: 1px;
+                            border-color: FluentPalette.warning;
 
-                    // Partial Forms (experimental)
-                    if total-partial-forms > 0: HorizontalLayout {
-                        spacing: 4px;
-                        Text {
-                            text: "•";
-                            color: FluentPalette.accent;
-                            font-size: FluentTypography.caption;
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: FluentPalette.warning;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                VerticalLayout {
+                                    Text {
+                                        text: total-skipped;
+                                        color: #F57C00;
+                                        font-size: FluentTypography.body;
+                                        font-weight: FluentTypography.weight-bold;
+                                    }
+                                    Text {
+                                        text: "Deleted Navmeshes";
+                                        color: #F57C00;
+                                        font-size: 10px;
+                                    }
+                                }
+                            }
                         }
-                        Text {
-                            text: total-partial-forms + " partial forms";
-                            color: FluentPalette.text-secondary;
-                            font-size: FluentTypography.caption;
+
+                        // Partial Forms badge
+                        if total-partial-forms > 0: Rectangle {
+                            height: 36px;
+                            min-width: 140px;
+                            border-radius: 6px;
+                            background: #F3E5F5;
+                            border-width: 1px;
+                            border-color: FluentPalette.accent;
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: FluentPalette.accent;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                VerticalLayout {
+                                    Text {
+                                        text: total-partial-forms;
+                                        color: #7B1FA2;
+                                        font-size: FluentTypography.body;
+                                        font-weight: FluentTypography.weight-bold;
+                                    }
+                                    Text {
+                                        text: "Partial Forms";
+                                        color: #7B1FA2;
+                                        font-size: 10px;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -606,6 +918,101 @@ export component MainWindow inherits Window {
                 clicked => {
                     if (!is-cleaning) {
                         start-cleaning();
+                    }
+                }
+            }
+        }
+
+        // ====================================================================
+        // Status Bar
+        // ====================================================================
+
+        Rectangle {
+            height: 32px;
+            background: FluentPalette.surface;
+            border-width: 1px;
+            border-color: FluentPalette.card-stroke;
+            border-radius: FluentPalette.corner-radius;
+
+            HorizontalLayout {
+                padding: 8px;
+                spacing: FluentPalette.spacing-md;
+
+                // Status icon
+                Text {
+                    text: is-cleaning ? "⚙" : (is-fully-configured ? "✓" : "○");
+                    font-size: 14px;
+                    color: is-cleaning ? FluentPalette.accent : (is-fully-configured ? FluentPalette.success : FluentPalette.text-tertiary);
+                    vertical-alignment: center;
+                }
+
+                // Status message
+                Text {
+                    text: status-message;
+                    font-size: FluentTypography.caption;
+                    color: is-cleaning ? FluentPalette.accent : FluentPalette.text-secondary;
+                    font-weight: is-cleaning ? FluentTypography.weight-semibold : FluentTypography.weight-regular;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                // Plugin count indicator (when not cleaning)
+                if !is-cleaning && total-plugins-in-load-order > 0: HorizontalLayout {
+                    spacing: 4px;
+
+                    Text {
+                        text: "Plugins:";
+                        font-size: FluentTypography.caption;
+                        color: FluentPalette.text-tertiary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: total-plugins-in-load-order;
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                        color: FluentPalette.text-primary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Progress indicator (when cleaning)
+                if is-cleaning && progress-total > 0: HorizontalLayout {
+                    spacing: 4px;
+
+                    Text {
+                        text: "Progress:";
+                        font-size: FluentTypography.caption;
+                        color: FluentPalette.text-tertiary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: progress-current + "/" + progress-total;
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                        color: FluentPalette.accent;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Game type indicator (if detected)
+                if detected-game-type != "": HorizontalLayout {
+                    spacing: 4px;
+
+                    Text {
+                        text: "Game:";
+                        font-size: FluentTypography.caption;
+                        color: FluentPalette.text-tertiary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: detected-game-type;
+                        font-size: FluentTypography.caption;
+                        font-weight: FluentTypography.weight-semibold;
+                        color: FluentPalette.accent;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -686,6 +1093,25 @@ export component MainWindow inherits Window {
 
         confirmed => {
             message-dialog-dismissed();
+        }
+    }
+
+    // ====================================================================
+    // About Dialog
+    // ====================================================================
+
+    if show-about-dialog: FluentMessageDialog {
+        dialog-title: "About AutoQAC";
+        message: "AutoQAC - Automatic Quick Auto Clean\n" +
+                 "Version 3.0.0\n\n" +
+                 "A modern application for batch cleaning Bethesda game plugins using xEdit's Quick Auto Clean (-QAC) functionality.\n\n" +
+                 "Removes Identical To Master (ITM) records, Undisabled References (UDRs), and deleted navmeshes from plugins for Fallout 3/NV/4 and Skyrim SE.\n\n" +
+                 "Built with Rust 2024, Slint 1.13, and Tokio async runtime.\n\n" +
+                 "Part of the XEdit-PACT Project\n" +
+                 "© 2025 - MIT License";
+
+        confirmed => {
+            about-dialog-dismissed();
         }
     }
 }

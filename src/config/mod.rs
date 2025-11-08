@@ -69,8 +69,8 @@ impl ConfigManager {
     /// # Arguments
     /// * `config` - The MainConfig to save
     pub fn save_main_config(&self, config: &MainConfig) -> Result<()> {
-        let yaml_string = serde_yaml_ng::to_string(config)
-            .context("Failed to serialize main config to YAML")?;
+        let yaml_string =
+            serde_yaml_ng::to_string(config).context("Failed to serialize main config to YAML")?;
 
         fs::write(&self.main_config_path, yaml_string)
             .with_context(|| format!("Failed to write main config: {}", self.main_config_path))?;
@@ -116,8 +116,8 @@ impl ConfigManager {
     /// # Arguments
     /// * `config` - The UserConfig to save
     pub fn save_user_config(&self, config: &UserConfig) -> Result<()> {
-        let yaml_string = serde_yaml_ng::to_string(config)
-            .context("Failed to serialize user config to YAML")?;
+        let yaml_string =
+            serde_yaml_ng::to_string(config).context("Failed to serialize user config to YAML")?;
 
         fs::write(&self.user_config_path, yaml_string)
             .with_context(|| format!("Failed to write user config: {}", self.user_config_path))?;
@@ -139,11 +139,13 @@ impl ConfigManager {
             return Ok(IgnoreConfig::default());
         }
 
-        let file_contents = fs::read_to_string(&self.ignore_config_path)
-            .with_context(|| format!("Failed to read ignore config: {}", self.ignore_config_path))?;
+        let file_contents = fs::read_to_string(&self.ignore_config_path).with_context(|| {
+            format!("Failed to read ignore config: {}", self.ignore_config_path)
+        })?;
 
-        let config: IgnoreConfig = serde_yaml_ng::from_str(&file_contents)
-            .with_context(|| format!("Failed to parse ignore config: {}", self.ignore_config_path))?;
+        let config: IgnoreConfig = serde_yaml_ng::from_str(&file_contents).with_context(|| {
+            format!("Failed to parse ignore config: {}", self.ignore_config_path)
+        })?;
 
         tracing::info!("Loaded ignore config from {}", self.ignore_config_path);
         Ok(config)
@@ -157,8 +159,9 @@ impl ConfigManager {
         let yaml_string = serde_yaml_ng::to_string(config)
             .context("Failed to serialize ignore config to YAML")?;
 
-        fs::write(&self.ignore_config_path, yaml_string)
-            .with_context(|| format!("Failed to write ignore config: {}", self.ignore_config_path))?;
+        fs::write(&self.ignore_config_path, yaml_string).with_context(|| {
+            format!("Failed to write ignore config: {}", self.ignore_config_path)
+        })?;
 
         tracing::info!("Saved ignore config to {}", self.ignore_config_path);
         Ok(())
@@ -168,90 +171,120 @@ impl ConfigManager {
     ///
     /// This is used when the main config file doesn't exist.
     fn create_default_main_config(&self) -> Result<MainConfig> {
-        use indexmap::IndexMap;
         use crate::models::PactData;
+        use indexmap::IndexMap;
 
         let mut xedit_lists = IndexMap::new();
-        xedit_lists.insert("FO3".to_string(), vec!["FO3Edit.exe".to_string(), "FO3Edit64.exe".to_string()]);
-        xedit_lists.insert("FNV".to_string(), vec!["FNVEdit.exe".to_string(), "FNVEdit64.exe".to_string()]);
-        xedit_lists.insert("FO4".to_string(), vec!["FO4Edit.exe".to_string(), "FO4Edit64.exe".to_string()]);
-        xedit_lists.insert("SSE".to_string(), vec!["SSEEdit.exe".to_string(), "SSEEdit64.exe".to_string()]);
-        xedit_lists.insert("FO4VR".to_string(), vec!["FO4VREdit.exe".to_string(), "FO4VREdit64.exe".to_string()]);
+        xedit_lists.insert(
+            "FO3".to_string(),
+            vec!["FO3Edit.exe".to_string(), "FO3Edit64.exe".to_string()],
+        );
+        xedit_lists.insert(
+            "FNV".to_string(),
+            vec!["FNVEdit.exe".to_string(), "FNVEdit64.exe".to_string()],
+        );
+        xedit_lists.insert(
+            "FO4".to_string(),
+            vec!["FO4Edit.exe".to_string(), "FO4Edit64.exe".to_string()],
+        );
+        xedit_lists.insert(
+            "SSE".to_string(),
+            vec!["SSEEdit.exe".to_string(), "SSEEdit64.exe".to_string()],
+        );
+        xedit_lists.insert(
+            "FO4VR".to_string(),
+            vec!["FO4VREdit.exe".to_string(), "FO4VREdit64.exe".to_string()],
+        );
         xedit_lists.insert("SkyrimVR".to_string(), vec!["TES5VREdit.exe".to_string()]);
-        xedit_lists.insert("Universal".to_string(), vec![
-            "xEdit.exe".to_string(),
-            "xEdit64.exe".to_string(),
-            "xfoedit.exe".to_string(),
-            "xfoedit64.exe".to_string(),
-        ]);
+        xedit_lists.insert(
+            "Universal".to_string(),
+            vec![
+                "xEdit.exe".to_string(),
+                "xEdit64.exe".to_string(),
+                "xfoedit.exe".to_string(),
+                "xfoedit64.exe".to_string(),
+            ],
+        );
 
         let mut skip_lists = IndexMap::new();
 
         // FO3 skip list
-        skip_lists.insert("FO3".to_string(), vec![
-            "".to_string(),
-            "Fallout3.esm".to_string(),
-            "Anchorage.esm".to_string(),
-            "ThePitt.esm".to_string(),
-            "BrokenSteel.esm".to_string(),
-            "PointLookout.esm".to_string(),
-            "Zeta.esm".to_string(),
-            "Unofficial Fallout 3 Patch.esm".to_string(),
-        ]);
+        skip_lists.insert(
+            "FO3".to_string(),
+            vec![
+                "".to_string(),
+                "Fallout3.esm".to_string(),
+                "Anchorage.esm".to_string(),
+                "ThePitt.esm".to_string(),
+                "BrokenSteel.esm".to_string(),
+                "PointLookout.esm".to_string(),
+                "Zeta.esm".to_string(),
+                "Unofficial Fallout 3 Patch.esm".to_string(),
+            ],
+        );
 
         // FNV skip list
-        skip_lists.insert("FNV".to_string(), vec![
-            "".to_string(),
-            "FalloutNV.esm".to_string(),
-            "DeadMoney.esm".to_string(),
-            "OldWorldBlues.esm".to_string(),
-            "HonestHearts.esm".to_string(),
-            "LonesomeRoad.esm".to_string(),
-            "TribalPack.esm".to_string(),
-            "MercenaryPack.esm".to_string(),
-            "ClassicPack.esm".to_string(),
-            "CaravanPack.esm".to_string(),
-            "GunRunnersArsenal.esm".to_string(),
-            "Unofficial Patch NVSE Plus.esp".to_string(),
-            "TaleOfTwoWastelands.esm".to_string(),
-            "TTWInteriors_Core.esm".to_string(),
-            "TTWInteriorsProject_Combo.esm".to_string(),
-            "TTWInteriorsProject_ComboHotfix.esm".to_string(),
-            "TTWInteriorsProject_Merged.esm".to_string(),
-            "TTWInteriors_Core_Hotfix.esm".to_string(),
-        ]);
+        skip_lists.insert(
+            "FNV".to_string(),
+            vec![
+                "".to_string(),
+                "FalloutNV.esm".to_string(),
+                "DeadMoney.esm".to_string(),
+                "OldWorldBlues.esm".to_string(),
+                "HonestHearts.esm".to_string(),
+                "LonesomeRoad.esm".to_string(),
+                "TribalPack.esm".to_string(),
+                "MercenaryPack.esm".to_string(),
+                "ClassicPack.esm".to_string(),
+                "CaravanPack.esm".to_string(),
+                "GunRunnersArsenal.esm".to_string(),
+                "Unofficial Patch NVSE Plus.esp".to_string(),
+                "TaleOfTwoWastelands.esm".to_string(),
+                "TTWInteriors_Core.esm".to_string(),
+                "TTWInteriorsProject_Combo.esm".to_string(),
+                "TTWInteriorsProject_ComboHotfix.esm".to_string(),
+                "TTWInteriorsProject_Merged.esm".to_string(),
+                "TTWInteriors_Core_Hotfix.esm".to_string(),
+            ],
+        );
 
         // FO4 skip list
-        skip_lists.insert("FO4".to_string(), vec![
-            "".to_string(),
-            "Fallout4.esm".to_string(),
-            "DLCCoast.esm".to_string(),
-            "DLCNukaWorld.esm".to_string(),
-            "DLCRobot.esm".to_string(),
-            "DLCworkshop01.esm".to_string(),
-            "DLCworkshop02.esm".to_string(),
-            "DLCworkshop03.esm".to_string(),
-            "Unofficial Fallout 4 Patch.esp".to_string(),
-            "PPF.esm".to_string(),
-            "PRP.esp".to_string(),
-            "PRP-Compat".to_string(),
-            "SS2.esm".to_string(),
-            "SS2_XPAC_Chapter2.esm".to_string(),
-            "SS2_XPAC_Chapter3.esm".to_string(),
-            "SS2Extended.esp".to_string(),
-        ]);
+        skip_lists.insert(
+            "FO4".to_string(),
+            vec![
+                "".to_string(),
+                "Fallout4.esm".to_string(),
+                "DLCCoast.esm".to_string(),
+                "DLCNukaWorld.esm".to_string(),
+                "DLCRobot.esm".to_string(),
+                "DLCworkshop01.esm".to_string(),
+                "DLCworkshop02.esm".to_string(),
+                "DLCworkshop03.esm".to_string(),
+                "Unofficial Fallout 4 Patch.esp".to_string(),
+                "PPF.esm".to_string(),
+                "PRP.esp".to_string(),
+                "PRP-Compat".to_string(),
+                "SS2.esm".to_string(),
+                "SS2_XPAC_Chapter2.esm".to_string(),
+                "SS2_XPAC_Chapter3.esm".to_string(),
+                "SS2Extended.esp".to_string(),
+            ],
+        );
 
         // SSE skip list
-        skip_lists.insert("SSE".to_string(), vec![
-            "".to_string(),
-            "Skyrim.esm".to_string(),
-            "Update.esm".to_string(),
-            "HearthFires.esm".to_string(),
-            "Dragonborn.esm".to_string(),
-            "Dawnguard.esm".to_string(),
-            "Unofficial Skyrim Special Edition Patch.esp".to_string(),
-            "_ResourcePack.esl".to_string(),
-        ]);
+        skip_lists.insert(
+            "SSE".to_string(),
+            vec![
+                "".to_string(),
+                "Skyrim.esm".to_string(),
+                "Update.esm".to_string(),
+                "HearthFires.esm".to_string(),
+                "Dragonborn.esm".to_string(),
+                "Dawnguard.esm".to_string(),
+                "Unofficial Skyrim Special Edition Patch.esp".to_string(),
+                "_ResourcePack.esl".to_string(),
+            ],
+        );
 
         let pact_data = PactData {
             version: "3.0.0".to_string(),

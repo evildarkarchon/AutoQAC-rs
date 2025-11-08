@@ -60,5 +60,7 @@
 //! See the [xEdit documentation](https://tes5edit.github.io/) for details on QAC mode.
 
 pub mod cleaning;
+pub mod game_detection;
 
-pub use cleaning::{CleaningService, CleaningError, CleaningStats, CleanResult, CleanStatus};
+pub use cleaning::{CleanResult, CleanStatus, CleaningError, CleaningService, CleaningStats};
+pub use game_detection::{detect_game_from_load_order, detect_xedit_game};

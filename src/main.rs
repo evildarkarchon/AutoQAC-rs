@@ -42,7 +42,7 @@
 
 use anyhow::Result;
 use autoqac::ui::GuiController;
-use autoqac::{ConfigManager, StateManager, APP_NAME, VERSION};
+use autoqac::{APP_NAME, ConfigManager, StateManager, VERSION};
 use std::sync::Arc;
 
 /// Main entry point for the AutoQAC GUI application
@@ -69,7 +69,8 @@ use std::sync::Arc;
 /// - GUI encounters a fatal error during execution
 fn main() -> Result<()> {
     // Setup logging with both file and console output
-    autoqac::logging::setup_logging_with_console("logs", "autoqac", false, true)?;
+    // CRITICAL: Must hold _log_guard for the entire program lifetime to keep logging active
+    let _log_guard = autoqac::logging::setup_logging_with_console("logs", "autoqac", false, true)?;
 
     tracing::info!("Starting {} v{}", APP_NAME, VERSION);
 
@@ -106,7 +107,12 @@ fn main() -> Result<()> {
 
     // Create GUI controller
     // This wires up the Slint UI with state management and the tokio runtime
-    let gui_controller = GuiController::new(state_manager.clone(), runtime.handle().clone())?;
+    let gui_controller = GuiController::new(
+        state_manager.clone(),
+        Arc::new(config_manager),
+        Arc::new(main_config),
+        runtime.handle().clone(),
+    )?;
 
     tracing::info!("GUI controller initialized, launching window");
 

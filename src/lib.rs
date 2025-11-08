@@ -166,6 +166,7 @@
 
 pub mod config;
 pub mod logging;
+pub mod metrics;
 pub mod models;
 pub mod services;
 pub mod state;
@@ -173,6 +174,7 @@ pub mod ui;
 
 // Re-export commonly used types for convenience
 pub use config::ConfigManager;
+pub use metrics::Metrics;
 pub use models::{AppState, IgnoreConfig, MainConfig, UserConfig};
 pub use state::{StateChange, StateManager};
 

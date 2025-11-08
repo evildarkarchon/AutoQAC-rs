@@ -5,8 +5,50 @@
 
 use crate::models::AppState;
 use camino::Utf8PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 use tokio::sync::broadcast;
+
+/// Lightweight snapshot of state fields used for change detection
+///
+/// This avoids cloning the entire AppState (including large collections)
+/// by only tracking the fields that are checked in detect_changes().
+#[derive(Clone, Debug)]
+struct ChangeSnapshot {
+    is_load_order_configured: bool,
+    is_mo2_configured: bool,
+    is_xedit_configured: bool,
+    is_cleaning: bool,
+    progress: usize,
+    total_plugins: usize,
+    current_plugin: Option<String>,
+    current_operation: String,
+    journal_expiration: u32,
+    cleaning_timeout: Duration,
+    cpu_threshold: u32,
+    mo2_mode: bool,
+    partial_forms_enabled: bool,
+}
+
+impl From<&AppState> for ChangeSnapshot {
+    fn from(state: &AppState) -> Self {
+        Self {
+            is_load_order_configured: state.is_load_order_configured,
+            is_mo2_configured: state.is_mo2_configured,
+            is_xedit_configured: state.is_xedit_configured,
+            is_cleaning: state.is_cleaning,
+            progress: state.progress,
+            total_plugins: state.total_plugins,
+            current_plugin: state.current_plugin.clone(),
+            current_operation: state.current_operation.clone(),
+            journal_expiration: state.journal_expiration,
+            cleaning_timeout: state.cleaning_timeout,
+            cpu_threshold: state.cpu_threshold,
+            mo2_mode: state.mo2_mode,
+            partial_forms_enabled: state.partial_forms_enabled,
+        }
+    }
+}
 
 /// Change events emitted when state is modified
 ///
@@ -15,9 +57,7 @@ use tokio::sync::broadcast;
 #[derive(Clone, Debug, PartialEq)]
 pub enum StateChange {
     /// Configuration has been updated
-    ConfigurationChanged {
-        is_fully_configured: bool,
-    },
+    ConfigurationChanged { is_fully_configured: bool },
 
     /// Progress has been updated during cleaning
     ProgressUpdated {
@@ -27,9 +67,7 @@ pub enum StateChange {
     },
 
     /// Cleaning process has started
-    CleaningStarted {
-        total_plugins: usize,
-    },
+    CleaningStarted { total_plugins: usize },
 
     /// Cleaning process has finished
     CleaningFinished {
@@ -46,9 +84,7 @@ pub enum StateChange {
     },
 
     /// Current operation has changed
-    OperationChanged {
-        operation: String,
-    },
+    OperationChanged { operation: String },
 
     /// Settings have been updated
     SettingsChanged,
@@ -105,7 +141,10 @@ impl StateManager {
     /// This clones the entire state, so it's safe to use without holding locks.
     /// For checking individual fields, consider using `read()` with a closure.
     pub fn snapshot(&self) -> AppState {
-        self.state.read().unwrap().clone()
+        self.state
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Execute a function with read access to the state
@@ -118,7 +157,7 @@ impl StateManager {
     where
         F: FnOnce(&AppState) -> R,
     {
-        let state = self.state.read().unwrap();
+        let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
         f(&state)
     }
 
@@ -147,18 +186,27 @@ impl StateManager {
     where
         F: FnOnce(&mut AppState),
     {
-        let mut state = self.state.write().unwrap();
-        let old_state = state.clone();
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        // Take lightweight snapshot instead of cloning entire state
+        let old_snapshot = ChangeSnapshot::from(&*state);
 
         // Apply the update
         update_fn(&mut state);
 
-        // Detect changes and emit events
-        let changes = self.detect_changes(&old_state, &state);
+        // Detect changes using snapshots instead of full state clones
+        let changes = self.detect_changes_from_snapshot(&old_snapshot, &state);
 
         for change in &changes {
-            // Ignore send errors - it's OK if no one is listening
-            let _ = self.state_tx.send(change.clone());
+            match self.state_tx.send(change.clone()) {
+                Ok(receiver_count) => {
+                    if receiver_count == 0 {
+                        tracing::debug!("State change emitted but no receivers: {:?}", change);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to broadcast state change {:?}: {}", change, e);
+                }
+            }
         }
 
         changes
@@ -172,10 +220,15 @@ impl StateManager {
         self.state_tx.subscribe()
     }
 
-    /// Detect what changed between two states and generate events
+    /// Detect what changed using lightweight snapshots instead of full state clones
     ///
     /// This is called internally by `update()` to determine which events to emit.
-    fn detect_changes(&self, old: &AppState, new: &AppState) -> Vec<StateChange> {
+    /// Uses ChangeSnapshot for efficiency - avoids cloning large collections.
+    fn detect_changes_from_snapshot(
+        &self,
+        old: &ChangeSnapshot,
+        new: &AppState,
+    ) -> Vec<StateChange> {
         let mut changes = Vec::new();
 
         // Configuration changes
@@ -233,6 +286,18 @@ impl StateManager {
         }
 
         changes
+    }
+
+    /// Detect what changed between two states and generate events
+    ///
+    /// This is called internally by `update()` to determine which events to emit.
+    ///
+    /// DEPRECATED: Use detect_changes_from_snapshot for better performance.
+    /// Kept for backward compatibility but should not be used.
+    #[allow(dead_code)]
+    fn detect_changes(&self, old: &AppState, new: &AppState) -> Vec<StateChange> {
+        let old_snapshot = ChangeSnapshot::from(old);
+        self.detect_changes_from_snapshot(&old_snapshot, new)
     }
 
     // Convenience methods for common state updates
@@ -334,7 +399,23 @@ impl StateManager {
             message,
         };
 
-        let _ = self.state_tx.send(plugin_event.clone());
+        match self.state_tx.send(plugin_event.clone()) {
+            Ok(receiver_count) => {
+                if receiver_count == 0 {
+                    tracing::debug!(
+                        "Plugin processed event emitted but no receivers: {:?}",
+                        plugin_event
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to broadcast plugin processed event {:?}: {}",
+                    plugin_event,
+                    e
+                );
+            }
+        }
         changes.push(plugin_event);
 
         changes
@@ -348,7 +429,16 @@ impl StateManager {
 
         // Emit a reset event
         let reset_event = StateChange::StateReset;
-        let _ = self.state_tx.send(reset_event.clone());
+        match self.state_tx.send(reset_event.clone()) {
+            Ok(receiver_count) => {
+                if receiver_count == 0 {
+                    tracing::debug!("State reset event emitted but no receivers");
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to broadcast state reset event: {}", e);
+            }
+        }
         changes.push(reset_event);
 
         changes
@@ -372,7 +462,10 @@ impl StateManager {
     ///
     /// # Returns
     /// A vector of StateChange events that were emitted
-    pub fn load_from_user_config(&self, user_config: &crate::models::UserConfig) -> Vec<StateChange> {
+    pub fn load_from_user_config(
+        &self,
+        user_config: &crate::models::UserConfig,
+    ) -> Vec<StateChange> {
         use std::time::Duration;
 
         self.update(|state| {
@@ -473,7 +566,9 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             changes[0],
-            StateChange::ConfigurationChanged { is_fully_configured: false }
+            StateChange::ConfigurationChanged {
+                is_fully_configured: false
+            }
         ));
 
         let state = manager.snapshot();
@@ -491,7 +586,9 @@ mod tests {
 
         assert!(matches!(
             changes[0],
-            StateChange::ConfigurationChanged { is_fully_configured: true }
+            StateChange::ConfigurationChanged {
+                is_fully_configured: true
+            }
         ));
 
         let state = manager.snapshot();
@@ -505,7 +602,10 @@ mod tests {
 
         let changes = manager.start_cleaning(plugins.clone());
 
-        assert!(matches!(changes[0], StateChange::CleaningStarted { total_plugins: 2 }));
+        assert!(matches!(
+            changes[0],
+            StateChange::CleaningStarted { total_plugins: 2 }
+        ));
 
         let state = manager.snapshot();
         assert!(state.is_cleaning);
@@ -520,10 +620,7 @@ mod tests {
 
         let changes = manager.stop_cleaning();
 
-        assert!(matches!(
-            changes[0],
-            StateChange::CleaningFinished { .. }
-        ));
+        assert!(matches!(changes[0], StateChange::CleaningFinished { .. }));
 
         let state = manager.snapshot();
         assert!(!state.is_cleaning);
@@ -533,10 +630,8 @@ mod tests {
     fn test_update_progress() {
         let manager = StateManager::new();
 
-        let changes = manager.update_progress(
-            "plugin1.esp".to_string(),
-            "Cleaning ITMs...".to_string(),
-        );
+        let changes =
+            manager.update_progress("plugin1.esp".to_string(), "Cleaning ITMs...".to_string());
 
         assert!(matches!(changes[0], StateChange::ProgressUpdated { .. }));
         assert!(matches!(changes[1], StateChange::OperationChanged { .. }));
@@ -559,7 +654,11 @@ mod tests {
         );
 
         // Should have progress update and plugin processed event
-        assert!(changes.iter().any(|c| matches!(c, StateChange::PluginProcessed { .. })));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, StateChange::PluginProcessed { .. }))
+        );
 
         let state = manager.snapshot();
         assert_eq!(state.cleaned_plugins.len(), 1);
@@ -586,7 +685,11 @@ mod tests {
             Some(stats1),
         );
 
-        assert!(changes.iter().any(|c| matches!(c, StateChange::PluginProcessed { .. })));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, StateChange::PluginProcessed { .. }))
+        );
 
         let state = manager.snapshot();
         assert_eq!(state.cleaned_plugins.len(), 1);
@@ -681,7 +784,10 @@ mod tests {
         // Should receive the event
         let event = rx.try_recv();
         assert!(event.is_ok());
-        assert!(matches!(event.unwrap(), StateChange::CleaningStarted { .. }));
+        assert!(matches!(
+            event.unwrap(),
+            StateChange::CleaningStarted { .. }
+        ));
     }
 
     #[test]

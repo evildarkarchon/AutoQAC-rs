@@ -1,42 +1,43 @@
 [package]
 name = "autoqac"
 version = "3.0.0"
-edition = "2021"
-rust-version = "1.70"
+edition = "2024"
 authors = ["AutoQAC Contributors"]
 description = "Automatic Quick Auto Clean for Bethesda Game Plugins"
-license = "MIT"
+license = "GPL-3.0"
 repository = "https://github.com/evildarkarchon/XEdit-PACT"
 
 [dependencies]
 # GUI Framework
-slint = { version = "1.13", features = ["backend-winit", "renderer-skia"] }
+slint = { version = "1.14.1", features = ["backend-winit", "renderer-skia"] }
 
 # Async Runtime (for subprocess management)
 tokio = { version = "1.41", features = ["full"] }
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
-serde_yaml_ng = "0.10"  # Maintained serde YAML fork
-config = "0.15.18"     # Structured configuration management
+serde_yaml_ng = "0.10"                             # Maintained serde YAML fork
+config = "0.15.18"                                 # Structured configuration management
 
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"  # For rotating file logs
+tracing-appender = "0.2"                                                    # For rotating file logs
 
 # Error Handling
-anyhow = "1.0"  # Application errors
-thiserror = "2.0"  # Library errors
+anyhow = "1.0"    # Application errors
+thiserror = "2.0" # Library errors
 
 # Path handling
-camino = "1.1"  # UTF-8 paths (Windows-safe)
+camino = "1.1" # UTF-8 paths (Windows-safe)
 
 # Collections
-indexmap = { version = "2.0", features = ["serde"] }  # Preserve insertion order for configs
+indexmap = { version = "2.12.0", features = [
+    "serde",
+] } # Preserve insertion order for configs
 
 # File dialogs
-rfd = "0.15.4"  # Native file dialogs
+rfd = "0.15.4" # Native file dialogs
 
 # Regex for parsing
 regex = "1.10"
@@ -45,9 +46,9 @@ regex = "1.10"
 # Testing
 tokio-test = "0.4"
 tempfile = "3.14"
-proptest = "1.0"  # Property-based testing
-criterion = "0.7.0"  # Benchmarking
-mockall = "0.13"  # Mocking
+proptest = "1.9.0"  # Property-based testing
+criterion = "0.7.0" # Benchmarking
+mockall = "0.13"    # Mocking
 
 [build-dependencies]
 slint-build = "1.9"
@@ -58,6 +59,7 @@ path = "src/main.rs"
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+lto = "fat"        # Fat LTO for maximum optimization (slower compile, faster runtime)
+codegen-units = 1  # Single codegen unit for better optimization
+strip = true       # Strip symbols for smaller binary
+panic = "abort"    # Abort on panic for smaller binary and faster unwinding

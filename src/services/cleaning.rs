@@ -28,10 +28,10 @@ pub enum CleanStatus {
 /// Statistics from a cleaning operation
 #[derive(Debug, Clone, Default)]
 pub struct CleaningStats {
-    pub undeleted: usize,         // Undisabled References (UDR)
-    pub removed: usize,           // Identical To Master (ITM)
-    pub skipped: usize,           // Deleted Navmeshes
-    pub partial_forms: usize,     // Partial Forms (experimental)
+    pub undeleted: usize,     // Undisabled References (UDR)
+    pub removed: usize,       // Identical To Master (ITM)
+    pub skipped: usize,       // Deleted Navmeshes
+    pub partial_forms: usize, // Partial Forms (experimental)
 }
 
 impl CleaningStats {
@@ -145,7 +145,8 @@ impl CleaningService {
             udr_pattern: Regex::new(r"Undeleting:\s*(.*)").expect("Invalid UDR regex"),
             itm_pattern: Regex::new(r"Removing:\s*(.*)").expect("Invalid ITM regex"),
             nvm_pattern: Regex::new(r"Skipping:\s*(.*)").expect("Invalid NVM regex"),
-            partial_form_pattern: Regex::new(r"Making Partial Form:\s*(.*)").expect("Invalid partial form regex"),
+            partial_form_pattern: Regex::new(r"Making Partial Form:\s*(.*)")
+                .expect("Invalid partial form regex"),
         }
     }
 
@@ -158,13 +159,20 @@ impl CleaningService {
     /// # Arguments
     /// * `xedit_exe_path` - Path to the xEdit executable
     /// * `game_type` - Optional game type for universal xEdit (e.g., "FO4", "SSE")
+    ///
+    /// # Errors
+    /// Returns `CleaningError::XEditNotConfigured` if the xEdit path is invalid
     pub fn get_log_paths(
         &self,
         xedit_exe_path: &Utf8Path,
         game_type: Option<&str>,
-    ) -> (Utf8PathBuf, Utf8PathBuf) {
-        let xedit_dir = xedit_exe_path.parent().expect("xEdit path must have parent");
-        let xedit_stem = xedit_exe_path.file_stem().expect("xEdit must have stem");
+    ) -> Result<(Utf8PathBuf, Utf8PathBuf), CleaningError> {
+        let xedit_dir = xedit_exe_path
+            .parent()
+            .ok_or(CleaningError::XEditNotConfigured)?;
+        let xedit_stem = xedit_exe_path
+            .file_stem()
+            .ok_or(CleaningError::XEditNotConfigured)?;
 
         // Determine the base name for log files
         let log_base = if let Some(game) = game_type {
@@ -178,7 +186,7 @@ impl CleaningService {
         let main_log = xedit_dir.join(format!("{}_log.txt", log_base));
         let exception_log = xedit_dir.join(format!("{}Exception.log", log_base));
 
-        (main_log, exception_log)
+        Ok((main_log, exception_log))
     }
 
     /// Clear xEdit log files before cleaning
@@ -301,31 +309,19 @@ impl CleaningService {
                 // Universal xEdit with game mode
                 let args = format!(
                     "{} -autoexit -autoload{} \"{}\"",
-                    cleaning_flag,
-                    partial_forms_options,
-                    plugin_name
+                    cleaning_flag, partial_forms_options, plugin_name
                 );
                 format!(
                     "\"{}\" run \"{} -{}\" {}",
-                    mo2_path,
-                    xedit_exe_path,
-                    game,
-                    args
+                    mo2_path, xedit_exe_path, game, args
                 )
             } else {
                 // Specific xEdit
                 let args = format!(
                     "{} -autoexit -autoload{} \"{}\"",
-                    cleaning_flag,
-                    partial_forms_options,
-                    plugin_name
+                    cleaning_flag, partial_forms_options, plugin_name
                 );
-                format!(
-                    "\"{}\" run \"{}\" {}",
-                    mo2_path,
-                    xedit_exe_path,
-                    args
-                )
+                format!("\"{}\" run \"{}\" {}", mo2_path, xedit_exe_path, args)
             }
         } else {
             // Direct mode (no MO2)
@@ -333,20 +329,13 @@ impl CleaningService {
                 // Universal xEdit with game mode
                 format!(
                     "\"{}\" -{} {} -autoexit -autoload{} \"{}\"",
-                    xedit_exe_path,
-                    game,
-                    cleaning_flag,
-                    partial_forms_options,
-                    plugin_name
+                    xedit_exe_path, game, cleaning_flag, partial_forms_options, plugin_name
                 )
             } else {
                 // Specific xEdit
                 format!(
                     "\"{}\" {} -autoexit -autoload{} \"{}\"",
-                    xedit_exe_path,
-                    cleaning_flag,
-                    partial_forms_options,
-                    plugin_name
+                    xedit_exe_path, cleaning_flag, partial_forms_options, plugin_name
                 )
             }
         }
@@ -420,7 +409,7 @@ mod tests {
     fn test_log_paths_specific_xedit() {
         let service = CleaningService::new();
         let xedit_path = Utf8PathBuf::from("C:/Games/SSEEdit.exe");
-        let (main_log, exc_log) = service.get_log_paths(&xedit_path, None);
+        let (main_log, exc_log) = service.get_log_paths(&xedit_path, None).unwrap();
 
         assert_eq!(main_log, Utf8PathBuf::from("C:/Games/SSEEDIT_log.txt"));
         assert_eq!(exc_log, Utf8PathBuf::from("C:/Games/SSEEDITException.log"));
@@ -430,7 +419,7 @@ mod tests {
     fn test_log_paths_universal_xedit() {
         let service = CleaningService::new();
         let xedit_path = Utf8PathBuf::from("C:/Games/xEdit.exe");
-        let (main_log, exc_log) = service.get_log_paths(&xedit_path, Some("FO4"));
+        let (main_log, exc_log) = service.get_log_paths(&xedit_path, Some("FO4")).unwrap();
 
         // Note: path separator might be \ or / depending on OS
         assert!(main_log.as_str().ends_with("FO4Edit_log.txt"));
@@ -514,10 +503,26 @@ mod tests {
     fn test_regex_patterns() {
         let service = CleaningService::new();
 
-        assert!(service.udr_pattern.is_match("Undeleting: [00000D62] <Skyrim.esm>"));
-        assert!(service.itm_pattern.is_match("Removing: [FormID] <Plugin.esp>"));
-        assert!(service.nvm_pattern.is_match("Skipping: [NavMesh] <Plugin.esp>"));
-        assert!(service.partial_form_pattern.is_match("Making Partial Form: [00000001]"));
+        assert!(
+            service
+                .udr_pattern
+                .is_match("Undeleting: [00000D62] <Skyrim.esm>")
+        );
+        assert!(
+            service
+                .itm_pattern
+                .is_match("Removing: [FormID] <Plugin.esp>")
+        );
+        assert!(
+            service
+                .nvm_pattern
+                .is_match("Skipping: [NavMesh] <Plugin.esp>")
+        );
+        assert!(
+            service
+                .partial_form_pattern
+                .is_match("Making Partial Form: [00000001]")
+        );
 
         assert!(!service.udr_pattern.is_match("Removing: test"));
         assert!(!service.itm_pattern.is_match("Undeleting: test"));

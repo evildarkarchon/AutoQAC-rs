@@ -67,9 +67,9 @@ pub struct AppState {
     pub skipped_plugins: HashSet<String>,
 
     // Per-plugin record statistics (reset for each plugin)
-    pub current_undeleted: usize,    // UDRs (Undeleted References)
-    pub current_removed: usize,      // ITMs (Identical To Master)
-    pub current_skipped: usize,      // Skipped records
+    pub current_undeleted: usize, // UDRs (Undeleted References)
+    pub current_removed: usize,   // ITMs (Identical To Master)
+    pub current_skipped: usize,   // Skipped records
     pub current_partial_forms: usize,
     pub current_total_processed: usize,
 
@@ -149,9 +149,7 @@ impl AppState {
     ///
     /// This mirrors the Python property `is_fully_configured`.
     pub fn is_fully_configured(&self) -> bool {
-        self.is_load_order_configured
-            && self.is_mo2_configured
-            && self.is_xedit_configured
+        self.is_load_order_configured && self.is_mo2_configured && self.is_xedit_configured
     }
 
     /// Get current cleaning statistics.

@@ -44,7 +44,8 @@ pub struct EventLoopBridge<T: ComponentHandle> {
     tokio_handle: tokio::runtime::Handle,
 
     /// Channel for sending UI update requests from tokio tasks to the Slint event loop
-    ui_update_tx: mpsc::UnboundedSender<Box<dyn FnOnce(&T) + Send>>,
+    /// Bounded to 100 updates to prevent unbounded memory growth if UI lags
+    ui_update_tx: mpsc::Sender<Box<dyn FnOnce(&T) + Send>>,
 }
 
 impl<T: ComponentHandle + 'static> EventLoopBridge<T> {
@@ -61,7 +62,8 @@ impl<T: ComponentHandle + 'static> EventLoopBridge<T> {
     /// A new EventLoopBridge instance
     pub fn new(ui: &T, tokio_handle: tokio::runtime::Handle) -> Self {
         let ui_weak = ui.as_weak();
-        let (ui_update_tx, mut ui_update_rx) = mpsc::unbounded_channel::<Box<dyn FnOnce(&T) + Send>>();
+        // Use bounded channel with capacity 100 to prevent OOM if UI lags
+        let (ui_update_tx, mut ui_update_rx) = mpsc::channel::<Box<dyn FnOnce(&T) + Send>>(100);
 
         // Spawn a background thread to handle UI updates
         // This thread bridges between tokio tasks and the Slint event loop
@@ -114,8 +116,14 @@ impl<T: ComponentHandle + 'static> EventLoopBridge<T> {
     where
         F: FnOnce(&T) + Send + 'static,
     {
-        if self.ui_update_tx.send(Box::new(update)).is_err() {
-            tracing::warn!("Failed to send UI update - handler thread may have stopped");
+        match self.ui_update_tx.try_send(Box::new(update)) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!("UI update channel full - skipping update to prevent backpressure");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("Failed to send UI update - handler thread has stopped");
+            }
         }
     }
 
@@ -169,7 +177,7 @@ impl<T: ComponentHandle + 'static> EventLoopBridge<T> {
 pub struct EventLoopBridgeHandle<T: ComponentHandle> {
     ui_weak: Weak<T>,
     tokio_handle: tokio::runtime::Handle,
-    ui_update_tx: mpsc::UnboundedSender<Box<dyn FnOnce(&T) + Send>>,
+    ui_update_tx: mpsc::Sender<Box<dyn FnOnce(&T) + Send>>,
 }
 
 // Manual Clone implementation to avoid requiring T: Clone
@@ -191,8 +199,14 @@ impl<T: ComponentHandle + 'static> EventLoopBridgeHandle<T> {
     where
         F: FnOnce(&T) + Send + 'static,
     {
-        if self.ui_update_tx.send(Box::new(update)).is_err() {
-            tracing::warn!("Failed to send UI update - handler thread may have stopped");
+        match self.ui_update_tx.try_send(Box::new(update)) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!("UI update channel full - skipping update to prevent backpressure");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("Failed to send UI update - handler thread has stopped");
+            }
         }
     }
 
@@ -221,8 +235,8 @@ impl<T: ComponentHandle + 'static> EventLoopBridgeHandle<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     // Note: These tests are limited because they require a real Slint UI component

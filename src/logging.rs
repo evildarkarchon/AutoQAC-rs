@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use std::fs;
 use tracing_appender::rolling;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Setup logging with rotating file appender.
 ///
@@ -15,12 +15,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 /// * `debug_mode` - If true, use debug level; otherwise use info level
 ///
 /// # Returns
-/// A guard that must be held for the duration of the program
+/// A guard that must be held for the duration of the program to keep logging active
 pub fn setup_logging(
     log_dir: &str,
     log_prefix: &str,
     debug_mode: bool,
-) -> Result<()> {
+) -> Result<tracing_appender::non_blocking::WorkerGuard> {
     // Create log directory if it doesn't exist
     let log_path = Utf8PathBuf::from(log_dir);
     if !log_path.exists() {
@@ -30,7 +30,7 @@ pub fn setup_logging(
 
     // Create daily rotating file appender
     let file_appender = rolling::daily(log_dir, log_prefix);
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Determine log level based on debug mode
     let env_filter = if debug_mode {
@@ -60,7 +60,7 @@ pub fn setup_logging(
         debug_mode
     );
 
-    Ok(())
+    Ok(guard)
 }
 
 /// Setup logging with optional console output for debugging.
@@ -72,12 +72,15 @@ pub fn setup_logging(
 /// * `log_prefix` - Prefix for log files
 /// * `debug_mode` - If true, use debug level; otherwise use info level
 /// * `console_output` - If true, also log to console
+///
+/// # Returns
+/// A guard that must be held for the duration of the program to keep logging active
 pub fn setup_logging_with_console(
     log_dir: &str,
     log_prefix: &str,
     debug_mode: bool,
     console_output: bool,
-) -> Result<()> {
+) -> Result<tracing_appender::non_blocking::WorkerGuard> {
     // Create log directory if it doesn't exist
     let log_path = Utf8PathBuf::from(log_dir);
     if !log_path.exists() {
@@ -87,7 +90,7 @@ pub fn setup_logging_with_console(
 
     // Create daily rotating file appender
     let file_appender = rolling::daily(log_dir, log_prefix);
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Determine log level based on debug mode
     let env_filter = if debug_mode {
@@ -130,7 +133,7 @@ pub fn setup_logging_with_console(
         console_output
     );
 
-    Ok(())
+    Ok(guard)
 }
 
 #[cfg(test)]

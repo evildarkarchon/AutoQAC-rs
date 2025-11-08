@@ -12,15 +12,17 @@
 // - File browser dialogs
 // - Cleaning orchestration
 
-use crate::models::MAX_CONCURRENT_XEDIT_PROCESSES;
+use crate::config::ConfigManager;
+use crate::models::{MAX_CONCURRENT_XEDIT_PROCESSES, MainConfig};
 use crate::services::cleaning::{CleaningService, CleaningStats};
+use crate::services::game_detection::detect_xedit_game;
 use crate::state::{StateChange, StateManager};
 use crate::ui::bridge::EventLoopBridge;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::fs;
 use std::sync::Arc;
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{Semaphore, watch};
 
 // Include the generated Slint code
 slint::include_modules!();
@@ -36,9 +38,16 @@ slint::include_modules!();
 /// # Example
 /// ```ignore
 /// let state_manager = Arc::new(StateManager::new());
+/// let config_manager = Arc::new(ConfigManager::new("AutoQAC Data")?);
+/// let main_config = Arc::new(config_manager.load_main_config()?);
 /// let runtime = tokio::runtime::Runtime::new()?;
 ///
-/// let controller = GuiController::new(state_manager, runtime.handle().clone())?;
+/// let controller = GuiController::new(
+///     state_manager,
+///     config_manager,
+///     main_config,
+///     runtime.handle().clone()
+/// )?;
 /// controller.run()?;  // Blocks until window is closed
 /// ```
 pub struct GuiController {
@@ -51,6 +60,12 @@ pub struct GuiController {
     /// Shared state manager
     state_manager: Arc<StateManager>,
 
+    /// Configuration manager for loading/saving YAML configs
+    _config_manager: Arc<ConfigManager>,
+
+    /// Main configuration (games, skip lists, xEdit paths)
+    main_config: Arc<MainConfig>,
+
     /// Cancellation sender for graceful shutdown
     /// Send `true` to request cancellation of ongoing operations
     cancel_tx: watch::Sender<bool>,
@@ -61,12 +76,16 @@ impl GuiController {
     ///
     /// # Arguments
     /// * `state_manager` - Shared application state manager
+    /// * `config_manager` - Configuration manager for loading/saving YAML configs
+    /// * `main_config` - Main configuration with games, skip lists, xEdit paths
     /// * `tokio_handle` - Handle to the tokio runtime for spawning async tasks
     ///
     /// # Returns
     /// A new GuiController ready to run
     pub fn new(
         state_manager: Arc<StateManager>,
+        config_manager: Arc<ConfigManager>,
+        main_config: Arc<MainConfig>,
         tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self> {
         // Create the Slint UI
@@ -82,7 +101,7 @@ impl GuiController {
         Self::sync_ui_with_state(&ui, &state_manager);
 
         // Set up Slint callbacks with cancellation receiver
-        Self::setup_callbacks(&ui, &bridge, &state_manager, cancel_rx);
+        Self::setup_callbacks(&ui, &bridge, &state_manager, &main_config, cancel_rx);
 
         // Subscribe to state changes and update UI
         Self::setup_state_subscription(&bridge, &state_manager);
@@ -93,6 +112,8 @@ impl GuiController {
             ui,
             _bridge: bridge,
             state_manager,
+            _config_manager: config_manager,
+            main_config,
             cancel_tx,
         })
     }
@@ -152,7 +173,7 @@ impl GuiController {
         ui.set_is_cleaning(state.is_cleaning);
         ui.set_progress_current(state.progress as i32);
         ui.set_progress_total(state.total_plugins as i32);
-        ui.set_current_plugin(state.current_plugin.unwrap_or_default().into());
+        ui.set_current_plugin(state.current_plugin.clone().unwrap_or_default().into());
         ui.set_current_operation(state.current_operation.clone().into());
 
         // Set settings
@@ -178,6 +199,48 @@ impl GuiController {
         ui.set_total_partial_forms(state.total_partial_forms as i32);
         ui.set_total_records_processed(state.total_records_processed as i32);
 
+        // Set path validation states
+        ui.set_load_order_path_valid(
+            state
+                .load_order_path
+                .as_ref()
+                .map(|p| p.exists())
+                .unwrap_or(false),
+        );
+        ui.set_xedit_exe_path_valid(
+            state
+                .xedit_exe_path
+                .as_ref()
+                .map(|p| p.exists())
+                .unwrap_or(false),
+        );
+        ui.set_mo2_exe_path_valid(
+            state
+                .mo2_exe_path
+                .as_ref()
+                .map(|p| p.exists())
+                .unwrap_or(false),
+        );
+
+        // Set detected game type
+        ui.set_detected_game_type(state.game_type.clone().unwrap_or_default().into());
+
+        // Set configuration status and count plugins if load order is configured
+        let plugin_count = if let Some(ref lo_path) = state.load_order_path {
+            Self::load_plugins_from_file(lo_path)
+                .ok()
+                .map(|plugins| plugins.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        ui.set_total_plugins_in_load_order(plugin_count as i32);
+        ui.set_is_fully_configured(state.is_fully_configured());
+
+        let status = Self::get_status_message(&state, plugin_count, false, None);
+        ui.set_status_message(status.into());
+
         tracing::debug!("UI synchronized with initial state");
     }
 
@@ -188,10 +251,12 @@ impl GuiController {
         ui: &MainWindow,
         bridge: &EventLoopBridge<MainWindow>,
         state_manager: &Arc<StateManager>,
+        main_config: &Arc<MainConfig>,
         cancel_rx: watch::Receiver<bool>,
     ) {
         let bridge_handle = bridge.clone_handle();
         let state_manager_clone = Arc::clone(state_manager);
+        let main_config_clone = Arc::clone(main_config);
         let cancel_rx_clone = cancel_rx.clone();
         let ui_weak_for_start = ui.as_weak();
 
@@ -221,7 +286,10 @@ impl GuiController {
                 Self::show_error_dialog(
                     &ui_weak_for_start,
                     "Configuration Incomplete",
-                    format!("Please configure the following before starting:\n\n{}", missing),
+                    format!(
+                        "Please configure the following before starting:\n\n{}",
+                        missing
+                    ),
                     "",
                 );
                 return;
@@ -231,12 +299,15 @@ impl GuiController {
             let bridge = bridge_handle.clone();
             let bridge_clone = bridge.clone();
             let state = Arc::clone(&state_manager_clone);
+            let config = Arc::clone(&main_config_clone);
             let cancel = cancel_rx_clone.clone();
             let ui_weak = ui_weak_for_start.clone();
 
             // Spawn async cleaning workflow with cancellation support
             bridge.spawn_async(move || async move {
-                if let Err(e) = Self::run_cleaning_workflow(state, bridge_clone, cancel).await {
+                if let Err(e) =
+                    Self::run_cleaning_workflow(state, config, bridge_clone, cancel).await
+                {
                     tracing::error!("Cleaning workflow error: {}", e);
 
                     // Show error dialog
@@ -261,7 +332,33 @@ impl GuiController {
             state.stop_cleaning();
 
             // Log cancellation request
-            tracing::warn!("Cancellation requested - ongoing operations will stop after current plugin");
+            tracing::warn!(
+                "Cancellation requested - ongoing operations will stop after current plugin"
+            );
+        });
+
+        let _config_manager_clone = Arc::clone(main_config);
+        let state = state_manager.clone();
+
+        // Refresh configuration callback
+        ui.on_refresh_configuration(move || {
+            tracing::info!("Refresh configuration button clicked");
+
+            // Note: In a full implementation, we would reload from ConfigManager here
+            // For now, we trigger game type detection with current paths
+            let (xedit_path, load_order_path) =
+                state.read(|s| (s.xedit_exe_path.clone(), s.load_order_path.clone()));
+
+            if let (Some(xedit), Some(lo_path)) = (xedit_path, load_order_path) {
+                if let Some(detected_game) = detect_xedit_game(xedit.as_str(), Some(&lo_path)) {
+                    tracing::info!("Re-detected game type on refresh: {}", detected_game);
+                    state.update(|s| {
+                        s.game_type = Some(detected_game);
+                    });
+                }
+            }
+
+            tracing::info!("Configuration refreshed");
         });
 
         let state = state_manager.clone();
@@ -270,12 +367,25 @@ impl GuiController {
         ui.on_browse_load_order(move || {
             tracing::debug!("Browse load order clicked");
 
-            if let Some(path) = Self::show_file_picker(
-                "Select Load Order File",
-                vec![("Text files", &["txt"])],
-            ) {
+            if let Some(path) =
+                Self::show_file_picker("Select Load Order File", vec![("Text files", &["txt"])])
+            {
                 tracing::info!("Load order path selected: {}", path);
-                state.set_load_order_path(Some(path));
+                state.set_load_order_path(Some(path.clone()));
+
+                // Auto-detect game type if xEdit is already configured
+                let xedit_path = state.read(|s| s.xedit_exe_path.clone());
+                if let Some(xedit) = xedit_path {
+                    if let Some(detected_game) = detect_xedit_game(xedit.as_str(), Some(&path)) {
+                        tracing::info!(
+                            "Auto-detected game type from load order: {}",
+                            detected_game
+                        );
+                        state.update(|s| {
+                            s.game_type = Some(detected_game);
+                        });
+                    }
+                }
             }
         });
 
@@ -289,7 +399,19 @@ impl GuiController {
                 Self::show_file_picker("Select xEdit Executable", vec![("Executables", &["exe"])])
             {
                 tracing::info!("xEdit path selected: {}", path);
-                state.set_xedit_exe_path(Some(path));
+                state.set_xedit_exe_path(Some(path.clone()));
+
+                // Auto-detect game type from xEdit executable
+                let load_order_path = state.read(|s| s.load_order_path.clone());
+                if let Some(detected_game) = detect_xedit_game(
+                    &path.to_string(),
+                    load_order_path.as_ref().map(|p| p.as_ref()),
+                ) {
+                    tracing::info!("Auto-detected game type: {}", detected_game);
+                    state.update(|s| {
+                        s.game_type = Some(detected_game);
+                    });
+                }
             }
         });
 
@@ -338,8 +460,8 @@ impl GuiController {
 
                 // Show the warning dialog
                 if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_partial_forms_enabled(false);  // Revert checkbox state
-                    ui.set_show_partial_forms_warning(true);  // Show dialog
+                    ui.set_partial_forms_enabled(false); // Revert checkbox state
+                    ui.set_show_partial_forms_warning(true); // Show dialog
                 }
             } else {
                 // User is disabling it - allow without warning
@@ -443,6 +565,30 @@ impl GuiController {
             }
         });
 
+        let ui_weak = ui.as_weak();
+
+        // Show about dialog
+        ui.on_show_about(move || {
+            tracing::debug!("Showing about dialog");
+
+            // Show the about dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_about_dialog(true);
+            }
+        });
+
+        let ui_weak = ui.as_weak();
+
+        // About dialog dismissed
+        ui.on_about_dialog_dismissed(move || {
+            tracing::debug!("About dialog dismissed");
+
+            // Hide the about dialog
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_about_dialog(false);
+            }
+        });
+
         // Window close event handler
         let state = state_manager.clone();
         let ui_weak = ui.as_weak();
@@ -487,157 +633,275 @@ impl GuiController {
         std::thread::spawn(move || {
             tracing::debug!("State subscription thread started");
 
-            while let Ok(change) = rx.blocking_recv() {
-                tracing::trace!("State change received: {:?}", change);
+            loop {
+                match rx.blocking_recv() {
+                    Ok(change) => {
+                        tracing::trace!("State change received: {:?}", change);
 
-                match change {
-                    StateChange::ConfigurationChanged {
-                        is_fully_configured,
-                    } => {
-                        tracing::debug!("Configuration changed: {}", is_fully_configured);
-                        // Update UI path fields from state
-                        let ui_weak = bridge_handle.ui_weak().clone();
-                        if let Some(ui) = ui_weak.upgrade() {
-                            // Get the current state snapshot
-                            let state_snapshot = state_manager_clone.snapshot();
+                        match change {
+                            StateChange::ConfigurationChanged {
+                                is_fully_configured,
+                            } => {
+                                tracing::debug!("Configuration changed: {}", is_fully_configured);
+                                // Update UI path fields and validation from state
+                                let ui_weak = bridge_handle.ui_weak().clone();
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    // Get the current state snapshot
+                                    let state_snapshot = state_manager_clone.snapshot();
 
-                            ui.set_load_order_path(
-                                state_snapshot
-                                    .load_order_path
-                                    .as_ref()
-                                    .map(|p| p.as_str().to_string())
-                                    .unwrap_or_default()
-                                    .into(),
-                            );
-                            ui.set_xedit_exe_path(
-                                state_snapshot
-                                    .xedit_exe_path
-                                    .as_ref()
-                                    .map(|p| p.as_str().to_string())
-                                    .unwrap_or_default()
-                                    .into(),
-                            );
-                            ui.set_mo2_exe_path(
-                                state_snapshot
-                                    .mo2_exe_path
-                                    .as_ref()
-                                    .map(|p| p.as_str().to_string())
-                                    .unwrap_or_default()
-                                    .into(),
-                            );
-                        }
-                    }
+                                    ui.set_load_order_path(
+                                        state_snapshot
+                                            .load_order_path
+                                            .as_ref()
+                                            .map(|p| p.as_str().to_string())
+                                            .unwrap_or_default()
+                                            .into(),
+                                    );
+                                    ui.set_xedit_exe_path(
+                                        state_snapshot
+                                            .xedit_exe_path
+                                            .as_ref()
+                                            .map(|p| p.as_str().to_string())
+                                            .unwrap_or_default()
+                                            .into(),
+                                    );
+                                    ui.set_mo2_exe_path(
+                                        state_snapshot
+                                            .mo2_exe_path
+                                            .as_ref()
+                                            .map(|p| p.as_str().to_string())
+                                            .unwrap_or_default()
+                                            .into(),
+                                    );
 
-                    StateChange::ProgressUpdated {
-                        current,
-                        total,
-                        current_plugin,
-                    } => {
-                        bridge_handle.update_ui(move |ui| {
-                            ui.set_progress_current(current as i32);
-                            ui.set_progress_total(total as i32);
-                            if let Some(plugin) = current_plugin {
-                                ui.set_current_plugin(plugin.into());
+                                    // Update path validation states
+                                    ui.set_load_order_path_valid(
+                                        state_snapshot
+                                            .load_order_path
+                                            .as_ref()
+                                            .map(|p| p.exists())
+                                            .unwrap_or(false),
+                                    );
+                                    ui.set_xedit_exe_path_valid(
+                                        state_snapshot
+                                            .xedit_exe_path
+                                            .as_ref()
+                                            .map(|p| p.exists())
+                                            .unwrap_or(false),
+                                    );
+                                    ui.set_mo2_exe_path_valid(
+                                        state_snapshot
+                                            .mo2_exe_path
+                                            .as_ref()
+                                            .map(|p| p.exists())
+                                            .unwrap_or(false),
+                                    );
+
+                                    // Update detected game type
+                                    ui.set_detected_game_type(
+                                        state_snapshot.game_type.clone().unwrap_or_default().into(),
+                                    );
+
+                                    // Update plugin count and configuration status
+                                    let plugin_count =
+                                        if let Some(ref lo_path) = state_snapshot.load_order_path {
+                                            Self::load_plugins_from_file(lo_path)
+                                                .ok()
+                                                .map(|plugins| plugins.len())
+                                                .unwrap_or(0)
+                                        } else {
+                                            0
+                                        };
+
+                                    ui.set_total_plugins_in_load_order(plugin_count as i32);
+                                    ui.set_is_fully_configured(is_fully_configured);
+
+                                    let status = Self::get_status_message(
+                                        &state_snapshot,
+                                        plugin_count,
+                                        false,
+                                        None,
+                                    );
+                                    ui.set_status_message(status.into());
+                                }
                             }
-                        });
-                    }
 
-                    StateChange::CleaningStarted { total_plugins } => {
-                        tracing::info!("Cleaning started: {} plugins", total_plugins);
-                        bridge_handle.update_ui(move |ui| {
-                            ui.set_is_cleaning(true);
-                            ui.set_progress_current(0);
-                            ui.set_progress_total(total_plugins as i32);
-                        });
-                    }
+                            StateChange::ProgressUpdated {
+                                current,
+                                total,
+                                current_plugin,
+                            } => {
+                                let state_snapshot = state_manager_clone.read(|s| s.clone());
+                                bridge_handle.update_ui(move |ui| {
+                                    ui.set_progress_current(current as i32);
+                                    ui.set_progress_total(total as i32);
 
-                    StateChange::CleaningFinished {
-                        cleaned,
-                        failed,
-                        skipped,
-                    } => {
-                        tracing::info!(
-                            "Cleaning finished: cleaned={}, failed={}, skipped={}",
-                            cleaned,
-                            failed,
-                            skipped
-                        );
-                        bridge_handle.update_ui(move |ui| {
+                                    if let Some(ref plugin) = current_plugin {
+                                        ui.set_current_plugin(plugin.clone().into());
+
+                                        // Update status message with current plugin
+                                        let status = Self::get_status_message(
+                                            &state_snapshot,
+                                            total,
+                                            true,
+                                            Some(plugin.as_str()),
+                                        );
+                                        ui.set_status_message(status.into());
+                                    }
+                                });
+                            }
+
+                            StateChange::CleaningStarted { total_plugins } => {
+                                tracing::info!("Cleaning started: {} plugins", total_plugins);
+                                bridge_handle.update_ui(move |ui| {
+                                    ui.set_is_cleaning(true);
+                                    ui.set_progress_current(0);
+                                    ui.set_progress_total(total_plugins as i32);
+                                    ui.set_status_message("Starting cleaning...".into());
+                                });
+                            }
+
+                            StateChange::CleaningFinished {
+                                cleaned,
+                                failed,
+                                skipped,
+                            } => {
+                                tracing::info!(
+                                    "Cleaning finished: cleaned={}, failed={}, skipped={}",
+                                    cleaned,
+                                    failed,
+                                    skipped
+                                );
+
+                                let state_snapshot = state_manager_clone.read(|s| s.clone());
+                                let plugin_count = state_snapshot.total_plugins;
+
+                                bridge_handle.update_ui(move |ui| {
                             ui.set_is_cleaning(false);
                             ui.set_cleaned_count(cleaned as i32);
                             ui.set_failed_count(failed as i32);
                             ui.set_skipped_count(skipped as i32);
+
+                            // Generate completion summary message
+                            let total = cleaned + failed + skipped;
+                            let status = if failed > 0 {
+                                format!(
+                                    "Completed with errors: {} cleaned, {} failed, {} skipped (Total: {})",
+                                    cleaned, failed, skipped, total
+                                )
+                            } else {
+                                format!(
+                                    "Completed successfully: {} cleaned, {} skipped (Total: {})",
+                                    cleaned, skipped, total
+                                )
+                            };
+                            ui.set_status_message(status.into());
+
+                            // Update ready state
+                            let ready_status = Self::get_status_message(&state_snapshot, plugin_count, false, None);
+                            // We'll keep the completion message for now, but this is here for future use
+                            let _ = ready_status;
                         });
+                            }
+
+                            StateChange::PluginProcessed {
+                                plugin,
+                                status,
+                                message,
+                            } => {
+                                tracing::debug!(
+                                    "Plugin processed: {} - {} ({})",
+                                    plugin,
+                                    status,
+                                    message
+                                );
+
+                                // Update current and aggregate statistics in UI
+                                let state_snapshot = state_manager_clone.snapshot();
+                                bridge_handle.update_ui(move |ui| {
+                                    // Current plugin statistics
+                                    ui.set_current_undeleted(
+                                        state_snapshot.current_undeleted as i32,
+                                    );
+                                    ui.set_current_removed(state_snapshot.current_removed as i32);
+                                    ui.set_current_skipped(state_snapshot.current_skipped as i32);
+                                    ui.set_current_partial_forms(
+                                        state_snapshot.current_partial_forms as i32,
+                                    );
+                                    ui.set_current_total_processed(
+                                        state_snapshot.current_total_processed as i32,
+                                    );
+
+                                    // Aggregate statistics (for results summary)
+                                    ui.set_total_undeleted(state_snapshot.total_undeleted as i32);
+                                    ui.set_total_removed(state_snapshot.total_removed as i32);
+                                    ui.set_total_skipped(state_snapshot.total_skipped as i32);
+                                    ui.set_total_partial_forms(
+                                        state_snapshot.total_partial_forms as i32,
+                                    );
+                                    ui.set_total_records_processed(
+                                        state_snapshot.total_records_processed as i32,
+                                    );
+                                });
+                            }
+
+                            StateChange::OperationChanged { operation } => {
+                                bridge_handle.update_ui(move |ui| {
+                                    ui.set_current_operation(operation.into());
+                                });
+                            }
+
+                            StateChange::SettingsChanged => {
+                                tracing::debug!("Settings changed");
+                                // Settings are updated directly via callbacks
+                            }
+
+                            StateChange::StateReset => {
+                                tracing::info!("State reset");
+                                bridge_handle.update_ui(|ui| {
+                                    ui.set_is_cleaning(false);
+                                    ui.set_progress_current(0);
+                                    ui.set_progress_total(0);
+                                    ui.set_current_plugin("".into());
+                                    ui.set_current_operation("".into());
+                                    ui.set_cleaned_count(0);
+                                    ui.set_failed_count(0);
+                                    ui.set_skipped_count(0);
+
+                                    // Reset current plugin statistics
+                                    ui.set_current_undeleted(0);
+                                    ui.set_current_removed(0);
+                                    ui.set_current_skipped(0);
+                                    ui.set_current_partial_forms(0);
+                                    ui.set_current_total_processed(0);
+
+                                    // Reset aggregate statistics
+                                    ui.set_total_undeleted(0);
+                                    ui.set_total_removed(0);
+                                    ui.set_total_skipped(0);
+                                    ui.set_total_partial_forms(0);
+                                    ui.set_total_records_processed(0);
+                                });
+                            }
+                        }
                     }
-
-                    StateChange::PluginProcessed {
-                        plugin,
-                        status,
-                        message,
-                    } => {
-                        tracing::debug!("Plugin processed: {} - {} ({})", plugin, status, message);
-
-                        // Update current and aggregate statistics in UI
-                        let state_snapshot = state_manager_clone.snapshot();
-                        bridge_handle.update_ui(move |ui| {
-                            // Current plugin statistics
-                            ui.set_current_undeleted(state_snapshot.current_undeleted as i32);
-                            ui.set_current_removed(state_snapshot.current_removed as i32);
-                            ui.set_current_skipped(state_snapshot.current_skipped as i32);
-                            ui.set_current_partial_forms(state_snapshot.current_partial_forms as i32);
-                            ui.set_current_total_processed(state_snapshot.current_total_processed as i32);
-
-                            // Aggregate statistics (for results summary)
-                            ui.set_total_undeleted(state_snapshot.total_undeleted as i32);
-                            ui.set_total_removed(state_snapshot.total_removed as i32);
-                            ui.set_total_skipped(state_snapshot.total_skipped as i32);
-                            ui.set_total_partial_forms(state_snapshot.total_partial_forms as i32);
-                            ui.set_total_records_processed(state_snapshot.total_records_processed as i32);
-                        });
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!(
+                            "State broadcast channel closed - shutting down subscription thread"
+                        );
+                        break;
                     }
-
-                    StateChange::OperationChanged { operation } => {
-                        bridge_handle.update_ui(move |ui| {
-                            ui.set_current_operation(operation.into());
-                        });
-                    }
-
-                    StateChange::SettingsChanged => {
-                        tracing::debug!("Settings changed");
-                        // Settings are updated directly via callbacks
-                    }
-
-                    StateChange::StateReset => {
-                        tracing::info!("State reset");
-                        bridge_handle.update_ui(|ui| {
-                            ui.set_is_cleaning(false);
-                            ui.set_progress_current(0);
-                            ui.set_progress_total(0);
-                            ui.set_current_plugin("".into());
-                            ui.set_current_operation("".into());
-                            ui.set_cleaned_count(0);
-                            ui.set_failed_count(0);
-                            ui.set_skipped_count(0);
-
-                            // Reset current plugin statistics
-                            ui.set_current_undeleted(0);
-                            ui.set_current_removed(0);
-                            ui.set_current_skipped(0);
-                            ui.set_current_partial_forms(0);
-                            ui.set_current_total_processed(0);
-
-                            // Reset aggregate statistics
-                            ui.set_total_undeleted(0);
-                            ui.set_total_removed(0);
-                            ui.set_total_skipped(0);
-                            ui.set_total_partial_forms(0);
-                            ui.set_total_records_processed(0);
-                        });
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            "State subscription lagged - {} events were skipped. Consider increasing broadcast buffer size.",
+                            skipped
+                        );
+                        // Continue receiving - this is a recoverable error
                     }
                 }
             }
 
-            tracing::debug!("State subscription thread terminated");
+            tracing::debug!("State subscription thread terminated gracefully");
         });
     }
 
@@ -721,31 +985,83 @@ impl GuiController {
     ///
     /// This is the main orchestration method that:
     /// 1. Loads plugins from load order file
-    /// 2. Filters plugins using skip lists (TODO: need ConfigManager integration)
-    /// 3. Creates CleaningService and Semaphore for serial execution
-    /// 4. Cleans each plugin sequentially
-    /// 5. Updates UI with progress and results
-    /// 6. Supports immediate cancellation via watch channel (no polling)
+    /// 2. Detects game type if not already set
+    /// 3. Filters plugins using skip lists from main config
+    /// 4. Creates CleaningService and Semaphore for serial execution
+    /// 5. Cleans each plugin sequentially
+    /// 6. Updates UI with progress and results
+    /// 7. Supports immediate cancellation via watch channel (no polling)
     async fn run_cleaning_workflow(
         state: Arc<StateManager>,
+        main_config: Arc<MainConfig>,
         bridge: crate::ui::bridge::EventLoopBridgeHandle<MainWindow>,
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<()> {
         tracing::info!("Starting cleaning workflow");
 
-        // Load plugins from load order file
-        let load_order_path = state
-            .read(|s| s.load_order_path.clone())
-            .ok_or_else(|| anyhow!("Load order path not configured"))?;
+        // Get current game type and paths from state
+        let (game_type, xedit_path, load_order_path) = state.read(|s| {
+            (
+                s.game_type.clone(),
+                s.xedit_exe_path.clone(),
+                s.load_order_path.clone(),
+            )
+        });
 
-        let plugins = Self::load_plugins_from_file(&load_order_path)
-            .context("Failed to load plugins")?;
+        // Auto-detect game type if not already set
+        let game_type = if game_type.is_none() {
+            if let (Some(xedit), Some(lo_path)) = (&xedit_path, &load_order_path) {
+                let detected = detect_xedit_game(xedit.as_str(), Some(&lo_path));
+                if let Some(ref detected_game) = detected {
+                    tracing::info!("Auto-detected game type: {}", detected_game);
+                    state.update(|s| {
+                        s.game_type = Some(detected_game.clone());
+                    });
+                }
+                detected
+            } else {
+                None
+            }
+        } else {
+            game_type
+        };
+
+        // Load plugins from load order file
+        let load_order_path =
+            load_order_path.ok_or_else(|| anyhow!("Load order path not configured"))?;
+
+        let plugins =
+            Self::load_plugins_from_file(&load_order_path).context("Failed to load plugins")?;
 
         tracing::info!("Loaded {} plugins from load order", plugins.len());
 
-        // TODO: Filter plugins using skip lists from config
-        // For now, clean all loaded plugins
-        let plugins_to_clean = plugins;
+        // Filter plugins using skip lists
+        let plugins_to_clean: Vec<String> = if let Some(ref game) = game_type {
+            let before_count = plugins.len();
+            let filtered: Vec<String> = plugins
+                .into_iter()
+                .filter(|plugin| {
+                    let should_skip = main_config.should_skip_plugin(game, plugin);
+                    if should_skip {
+                        tracing::debug!("Skipping plugin (in skip list): {}", plugin);
+                    }
+                    !should_skip
+                })
+                .collect();
+
+            let skipped_count = before_count - filtered.len();
+            if skipped_count > 0 {
+                tracing::info!(
+                    "Filtered out {} plugins from skip list for game type: {}",
+                    skipped_count,
+                    game
+                );
+            }
+            filtered
+        } else {
+            tracing::warn!("Game type not detected - cleaning all plugins without filtering");
+            plugins
+        };
 
         if plugins_to_clean.is_empty() {
             tracing::warn!("No plugins to clean");
@@ -825,17 +1141,21 @@ impl GuiController {
                 tracing::info!("Cleaning plugin {}: {}", index + 1, plugin);
 
                 // Update UI with current plugin
-                state_clone.update_progress(
-                    plugin.clone(),
-                    format!("Cleaning {}...", plugin),
-                );
+                state_clone.update_progress(plugin.clone(), format!("Cleaning {}...", plugin));
 
                 // CANCELLATION POINT 2: Inside clean_plugin() via tokio::select!
                 // Races xEdit subprocess execution against cancellation signal
-                match Self::clean_plugin(&plugin, &state_clone, &service_clone, cancel_rx_clone).await {
+                match Self::clean_plugin(&plugin, &state_clone, &service_clone, cancel_rx_clone)
+                    .await
+                {
                     Ok((status, message, stats)) => {
                         tracing::info!("Plugin {} completed: {} - {}", plugin, status, message);
-                        state_clone.add_plugin_result(plugin.clone(), &status, message.clone(), stats);
+                        state_clone.add_plugin_result(
+                            plugin.clone(),
+                            &status,
+                            message.clone(),
+                            stats,
+                        );
 
                         // Update UI
                         bridge_clone.update_ui(move |ui| {
@@ -879,6 +1199,54 @@ impl GuiController {
         Ok(())
     }
 
+    /// Generate contextual status message based on current state
+    ///
+    /// Returns a user-friendly status message that reflects the current application state.
+    fn get_status_message(
+        state: &crate::models::AppState,
+        plugin_count: usize,
+        is_cleaning: bool,
+        current_plugin: Option<&str>,
+    ) -> String {
+        if is_cleaning {
+            if let Some(plugin) = current_plugin {
+                format!(
+                    "Cleaning {} ({}/{})",
+                    plugin,
+                    state.cleaned_plugins.len()
+                        + state.failed_plugins.len()
+                        + state.skipped_plugins.len()
+                        + 1,
+                    state.total_plugins
+                )
+            } else {
+                "Starting cleaning...".to_string()
+            }
+        } else if !state.is_fully_configured() {
+            let mut missing = Vec::new();
+            if state.load_order_path.is_none() {
+                missing.push("Load Order");
+            }
+            if state.xedit_exe_path.is_none() {
+                missing.push("xEdit");
+            }
+            if missing.is_empty() {
+                "Configuration incomplete".to_string()
+            } else {
+                format!("Setup required: {}", missing.join(", "))
+            }
+        } else if plugin_count > 0 {
+            let game_info = if let Some(ref game) = state.game_type {
+                format!(" ({}) -", game)
+            } else {
+                String::new()
+            };
+            format!("Ready to clean{} {} plugins", game_info, plugin_count)
+        } else {
+            "Ready - No plugins in load order".to_string()
+        }
+    }
+
     /// Load plugins from a load order file (plugins.txt or loadorder.txt)
     ///
     /// Reads the file and extracts plugin names, filtering out comments and invalid entries.
@@ -903,9 +1271,7 @@ impl GuiController {
                 };
 
                 // Only include .esp, .esm, .esl files
-                if plugin.ends_with(".esp")
-                    || plugin.ends_with(".esm")
-                    || plugin.ends_with(".esl")
+                if plugin.ends_with(".esp") || plugin.ends_with(".esm") || plugin.ends_with(".esl")
                 {
                     Some(plugin.to_string())
                 } else {
@@ -937,22 +1303,23 @@ impl GuiController {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<(String, String, Option<CleaningStats>)> {
         // Get configuration from state
-        let (xedit_exe, game_type, mo2_exe, partial_forms, timeout, _mo2_install, _xedit_install) = state.read(|s| {
-            (
-                s.xedit_exe_path.clone(),
-                s.game_type.clone(),
-                s.mo2_exe_path.clone(),
-                s.partial_forms_enabled,
-                s.cleaning_timeout,
-                s.mo2_install_path.clone(),
-                s.xedit_install_path.clone(),
-            )
-        });
+        let (xedit_exe, game_type, mo2_exe, partial_forms, timeout, _mo2_install, _xedit_install) =
+            state.read(|s| {
+                (
+                    s.xedit_exe_path.clone(),
+                    s.game_type.clone(),
+                    s.mo2_exe_path.clone(),
+                    s.partial_forms_enabled,
+                    s.cleaning_timeout,
+                    s.mo2_install_path.clone(),
+                    s.xedit_install_path.clone(),
+                )
+            });
 
         let xedit_exe = xedit_exe.ok_or_else(|| anyhow!("xEdit exe path not configured"))?;
 
         // Get log paths
-        let (main_log, exception_log) = service.get_log_paths(&xedit_exe, game_type.as_deref());
+        let (main_log, exception_log) = service.get_log_paths(&xedit_exe, game_type.as_deref())?;
 
         // Clear old logs
         service.clear_logs(&main_log, &exception_log)?;
@@ -1002,11 +1369,7 @@ impl GuiController {
         let stats = service.parse_log_file(&main_log)?;
 
         if stats.has_changes() {
-            Ok((
-                "cleaned".to_string(),
-                stats.summary(),
-                Some(stats),
-            ))
+            Ok(("cleaned".to_string(), stats.summary(), Some(stats)))
         } else {
             Ok((
                 "skipped".to_string(),
