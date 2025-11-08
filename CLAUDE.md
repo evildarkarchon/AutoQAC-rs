@@ -75,12 +75,12 @@ This is a **Rust port** of the Python AutoQAC application with these key differe
 
 6. **EventLoopBridge** (`src/ui/bridge.rs`): Coordinates between tokio async runtime and Slint's synchronous event loop using channels and weak UI handles.
 
-7. **main.rs**: Slim entry point (~70 lines) that:
+7. **main.rs**: Slim entry point (~140 lines) that:
    - Creates tokio runtime (4 worker threads)
    - Initializes StateManager and ConfigManager
    - Loads configurations
    - Creates and runs GuiController
-   - Handles graceful shutdown
+   - Handles graceful shutdown with cancellation support
 
 ### Threading Model
 
@@ -121,7 +121,7 @@ pub enum StateChange {
 
 ### Slint UI Integration
 
-- UI files: `ui/main.slint`, `ui/components/`, `ui/dialogs/`
+- UI files: `ui/main.slint`, `ui/fluent/*.slint`
 - Compiled at build time by `slint-build` (see `build.rs`)
 - Native file dialogs via `rfd` crate
 - Fluent Design styling with acrylic effects and modern Windows 11 aesthetics
@@ -129,7 +129,7 @@ pub enum StateChange {
 ### Workflow: Plugin Cleaning
 
 1. Load plugins from load order file (`plugins.txt` or `loadorder.txt`)
-2. Filter using skip lists from main config (TODO: fully integrated)
+2. Filter using skip lists from main config
 3. Create `CleaningService` and `Semaphore(1)` for serial execution
 4. For each plugin (with cancellation support):
    - Acquire semaphore permit (blocks if another plugin is cleaning)
@@ -148,7 +148,7 @@ pub enum StateChange {
 ```rust
 pub const MAX_CONCURRENT_XEDIT_PROCESSES: usize = 1;
 ```
-This is **hardcoded** and **non-negotiable**. xEdit has file locking issues that prevent multiple instances from running simultaneously. The semaphore in `GuiController::run_cleaning_workflow` enforces this.
+This is **hardcoded** in `src/models/app_state.rs` and **non-negotiable**. xEdit has file locking issues that prevent multiple instances from running simultaneously. The semaphore in `GuiController::run_cleaning_workflow` enforces this.
 
 ### Async/Sync Boundary
 
@@ -182,40 +182,44 @@ All paths use `camino::Utf8PathBuf` for Windows-safe UTF-8 paths. This avoids en
 ## Testing
 
 - Unit tests in each module (`#[cfg(test)] mod tests`)
-- Integration tests in `tests/` directory (TODO: add more)
+- Integration tests in `tests/` directory:
+  - `tests/config_integration_tests.rs`: Configuration loading tests
+  - `tests/game_detection_tests.rs`: Game type detection tests
+  - `tests/service_integration_tests.rs`: Service integration tests
+  - `tests/state_integration_tests.rs`: State management tests
 - Uses: `tokio-test`, `tempfile`, `proptest`, `mockall`
 - Property-based testing for edge cases (via `proptest`)
 
 ## Dependencies
 
 ### Core Runtime
-- **slint**: GUI framework with Fluent Design
-- **tokio**: Async runtime for subprocess management
+- **slint** (1.14): GUI framework with Fluent Design
+- **tokio** (1.41): Async runtime for subprocess management
 
 ### Configuration & Serialization
 - **serde**: Serialization framework
-- **serde_yaml_ng**: YAML config files (maintained fork)
+- **serde_yaml_ng** (0.10): YAML config files (maintained fork)
 - **config**: Structured configuration (not heavily used yet)
 
 ### Error Handling & Logging
 - **anyhow**: Application errors with context
-- **thiserror**: Library errors with derive macros
-- **tracing**: Structured logging
-- **tracing-subscriber**: Log formatting and filtering
-- **tracing-appender**: Rotating file logs
+- **thiserror** (2.0): Library errors with derive macros
+- **tracing** (0.1): Structured logging
+- **tracing-subscriber** (0.3): Log formatting and filtering
+- **tracing-appender** (0.2): Rotating file logs
 
 ### Utilities
-- **camino**: UTF-8 paths (Windows-safe)
-- **regex**: Log file parsing
-- **indexmap**: Order-preserving hashmaps for configs
-- **rfd**: Native file dialogs
+- **camino** (1.1): UTF-8 paths (Windows-safe)
+- **regex** (1.10): Log file parsing
+- **indexmap** (2.12): Order-preserving hashmaps for configs
+- **rfd** (0.15): Native file dialogs
 
 ## Project Structure
 
 ```
 autoqac-rust/
 ├── src/
-│   ├── main.rs                    # Entry point (~70 lines)
+│   ├── main.rs                    # Entry point (~140 lines)
 │   ├── lib.rs                     # Library root with re-exports
 │   ├── models/
 │   │   ├── mod.rs                # Model re-exports
@@ -227,17 +231,28 @@ autoqac-rust/
 │   │   └── mod.rs                # ConfigManager for YAML I/O
 │   ├── services/
 │   │   ├── mod.rs
-│   │   └── cleaning.rs           # CleaningService (pure business logic)
+│   │   ├── cleaning.rs           # CleaningService (pure business logic)
+│   │   └── game_detection.rs    # Game type detection
 │   ├── ui/
 │   │   ├── mod.rs
 │   │   ├── controller.rs         # GuiController (GUI-business mediator)
 │   │   └── bridge.rs             # EventLoopBridge (tokio/Slint coordination)
-│   └── logging.rs                # Logging setup
+│   ├── logging.rs                # Logging setup
+│   └── metrics.rs                # Metrics tracking
 ├── ui/
 │   ├── main.slint                # Main window UI definition
-│   ├── components/               # Reusable UI components
-│   ├── dialogs/                  # Dialog components
-│   └── fluent/                   # Fluent Design styles
+│   └── fluent/                   # Fluent Design styles and components
+│       ├── button.slint
+│       ├── card.slint
+│       ├── checkbox.slint
+│       ├── dialog.slint
+│       ├── input.slint
+│       └── styles.slint
+├── tests/                        # Integration tests
+│   ├── config_integration_tests.rs
+│   ├── game_detection_tests.rs
+│   ├── service_integration_tests.rs
+│   └── state_integration_tests.rs
 ├── build.rs                      # Slint build script
 ├── Cargo.toml                    # Dependencies and metadata
 └── AutoQAC Data/                 # Configuration files (runtime)
@@ -251,6 +266,7 @@ autoqac-rust/
 - Skyrim Special Edition (SSE)
 - Fallout 4 VR (FO4VR)
 - Skyrim VR (SkyrimVR)
+- Tale of Two Wastelands (TTW)
 
 Each game has xEdit executables and skip lists configured in `AutoQAC Main.yaml`.
 
@@ -270,7 +286,7 @@ Log parsing extracts:
 
 ## Development Notes
 
-- Rust 1.70+ required (specified in Cargo.toml)
+- Rust 1.85.0+ required (edition 2024 specified in Cargo.toml)
 - Windows primary platform (cross-platform support via tokio/Slint)
 - Release builds use LTO and strip symbols for smaller binaries
 - Slint UI hot-reload: Not supported (requires full rebuild)
